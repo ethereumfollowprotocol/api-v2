@@ -8,10 +8,10 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces",
-    "dev:api": "npm run dev --workspace=@efp/api",
-    "dev:orchestrator": "npm run dev --workspace=@efp/orchestrator",
-    "dev:wal-listener": "npm run dev --workspace=@efp/wal-listener",
-    "dev:workers": "npm run dev --workspace=@efp/workers",
+    "dev:api": "dotenv -- tsx watch services/api/src/index.ts",
+    "dev:orchestrator": "dotenv -- tsx watch services/orchestrator/src/index.ts",
+    "dev:wal-listener": "dotenv -- tsx watch services/wal-listener/src/index.ts",
+    "dev:workers": "dotenv -- tsx watch services/workers/src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest watch",
     "test:comparison": "vitest run --config vitest.comparison.config.ts",
@@ -20,6 +20,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^8.56.0",
     "prettier": "^3.2.0",
     "typescript": "^5.3.0",

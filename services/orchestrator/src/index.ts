@@ -7,7 +7,7 @@ import {
   waitForIndexerCatchUp,
   getSystemState,
   ensureUsersIndex,
-  getElasticsearch,
+  ensureSchema,
 } from '@efp/shared';
 import { runMigrations } from './migrations.js';
 import { indexUsersToElasticsearch } from './elasticsearch.js';
@@ -18,6 +18,9 @@ async function main() {
   logger.info('Orchestrator starting...');
 
   try {
+    // Ensure database schema exists
+    await ensureSchema();
+
     // Check current state
     const state = await getSystemState();
     logger.info({ state }, 'Current system state');

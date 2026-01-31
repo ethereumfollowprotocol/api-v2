@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: efp
       POSTGRES_DB: efp
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./services/shared/src/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql

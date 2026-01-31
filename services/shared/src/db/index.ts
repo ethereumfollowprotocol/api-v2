@@ -3,6 +3,7 @@ export {
   closePool,
   query,
   getClient,
+  ensureSchema,
   type Pool,
   type PoolClient,
   type QueryResult,

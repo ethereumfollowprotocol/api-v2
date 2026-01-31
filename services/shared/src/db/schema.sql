@@ -5,6 +5,9 @@
 -- TYPES
 -- ============================================================
 
+-- Create types schema if it doesn't exist (for custom domains)
+CREATE SCHEMA IF NOT EXISTS types;
+
 -- Custom domains (may already exist in indexer)
 DO $$ BEGIN
   CREATE DOMAIN types.eth_address AS VARCHAR(42) CHECK (VALUE ~ '^0x[a-f0-9]{40}$');
