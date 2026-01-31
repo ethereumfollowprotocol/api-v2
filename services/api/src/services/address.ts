@@ -1,4 +1,5 @@
-import { createPublicClient, http, isAddress, normalize } from 'viem';
+import { createPublicClient, http, isAddress } from 'viem';
+import { normalize } from 'viem/ens';
 import { mainnet } from 'viem/chains';
 import { env, type Address } from '@efp/shared';
 

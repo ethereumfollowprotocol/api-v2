@@ -7,6 +7,7 @@ export {
   closePool,
   query,
   getClient,
+  ensureSchema,
   getRedis,
   closeRedis,
   getCache,

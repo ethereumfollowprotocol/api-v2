@@ -1,5 +1,5 @@
 {
-  "name": "@efp/api",
+  "name": "@efp/indexer",
   "version": "1.0.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -10,9 +10,6 @@
   },
   "dependencies": {
     "@efp/shared": "*",
-    "@fastify/cors": "^9.0.0",
-    "@fastify/rate-limit": "^9.1.0",
-    "fastify": "^4.25.0",
     "viem": "^2.7.0"
   },
   "devDependencies": {

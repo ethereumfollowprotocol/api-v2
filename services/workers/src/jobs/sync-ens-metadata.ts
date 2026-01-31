@@ -1,5 +1,6 @@
 import type PgBoss from 'pg-boss';
-import { createPublicClient, http, normalize } from 'viem';
+import { createPublicClient, http } from 'viem';
+import { normalize } from 'viem/ens';
 import { mainnet } from 'viem/chains';
 import { query, env, createLogger } from '@efp/shared';
 

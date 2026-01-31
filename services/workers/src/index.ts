@@ -23,10 +23,10 @@ const logger = createLogger('workers');
 const jobConfigs: Record<string, Partial<PgBoss.WorkOptions>> = {
   'update-user-stats': { teamSize: 5, teamConcurrency: 5 },
   'calculate-mutuals': { teamSize: 3, teamConcurrency: 3 },
-  'update-leaderboard-entry': { teamSize: 2, teamConcurrency: 2, batchSize: 10 },
+  'update-leaderboard-entry': { teamSize: 2, teamConcurrency: 2 },
   'update-leaderboard-full': { teamSize: 1, teamConcurrency: 1 },
   'sync-ens-metadata': { teamSize: 2, teamConcurrency: 2 },
-  'sync-user-to-elasticsearch': { teamSize: 3, teamConcurrency: 3, batchSize: 50 },
+  'sync-user-to-elasticsearch': { teamSize: 3, teamConcurrency: 3 },
   'resync-user-relationships': { teamSize: 1, teamConcurrency: 1 },
   'ensure-user-stats': { teamSize: 5, teamConcurrency: 5 },
   'batch-reconcile-stats': { teamSize: 1, teamConcurrency: 1 },
@@ -66,7 +66,8 @@ async function main() {
   logger.info('pg-boss started');
 
   // Register job handlers
-  const handlers: Array<[string, PgBoss.WorkHandler<unknown>]> = [
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handlers: Array<[string, (job: PgBoss.Job<any>) => Promise<void>]> = [
     ['update-user-stats', handleUpdateUserStats],
     ['calculate-mutuals', handleCalculateMutuals],
     ['update-leaderboard-entry', handleUpdateLeaderboardEntry],
@@ -81,7 +82,7 @@ async function main() {
 
   for (const [jobName, handler] of handlers) {
     const config = jobConfigs[jobName] || {};
-    await boss.work(jobName, config, handler as PgBoss.WorkHandler<object>);
+    await boss.work(jobName, config, handler);
     logger.info({ jobName, config }, 'Registered job handler');
   }
 

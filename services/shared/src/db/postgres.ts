@@ -1,6 +1,11 @@
+import { readFileSync } from 'fs';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
 import pg from 'pg';
 import { env } from '../config/index.js';
 import { logger } from '../logger.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const { Pool } = pg;
 
@@ -53,3 +58,23 @@ export async function getClient(): Promise<pg.PoolClient> {
 }
 
 export type { Pool, PoolClient, QueryResult } from 'pg';
+
+export async function ensureSchema(): Promise<void> {
+  const schemaPath = resolve(__dirname, 'schema.sql');
+  logger.info({ schemaPath }, 'Loading database schema');
+
+  try {
+    const schemaSql = readFileSync(schemaPath, 'utf-8');
+    const client = await getClient();
+
+    try {
+      await client.query(schemaSql);
+      logger.info('Database schema ensured');
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    logger.error({ err }, 'Failed to ensure database schema');
+    throw err;
+  }
+}

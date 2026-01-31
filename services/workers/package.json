@@ -9,7 +9,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@efp/shared": "workspace:*",
+    "@efp/shared": "*",
     "pg-boss": "^9.0.0",
     "viem": "^2.7.0"
   },

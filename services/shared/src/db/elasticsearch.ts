@@ -66,9 +66,13 @@ export async function ensureUsersIndex(): Promise<void> {
       },
     },
     settings: {
+      number_of_shards: 1,
+      number_of_replicas: 0,
+      'index.max_ngram_diff': 18,
       analysis: {
         analyzer: {
           autocomplete: {
+            type: 'custom',
             tokenizer: 'autocomplete',
             filter: ['lowercase'],
           },
