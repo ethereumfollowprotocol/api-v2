@@ -1,4 +1,4 @@
-import Redis from 'ioredis';
+import { Redis } from 'ioredis';
 import { env } from '../config/index.js';
 import { logger } from '../logger.js';
 
@@ -7,28 +7,29 @@ let redis: Redis | null = null;
 export function getRedis(): Redis {
   if (redis) return redis;
 
-  redis = new Redis(env.REDIS_URL, {
+  const client = new Redis(env.REDIS_URL, {
     maxRetriesPerRequest: 3,
-    retryStrategy(times) {
+    retryStrategy(times: number) {
       const delay = Math.min(times * 50, 2000);
       return delay;
     },
     lazyConnect: true,
   });
 
-  redis.on('error', (err) => {
+  client.on('error', (err: Error) => {
     logger.error({ err }, 'Redis connection error');
   });
 
-  redis.on('connect', () => {
+  client.on('connect', () => {
     logger.debug('Redis connected');
   });
 
-  redis.on('ready', () => {
+  client.on('ready', () => {
     logger.info('Redis ready');
   });
 
-  return redis;
+  redis = client;
+  return client;
 }
 
 export async function closeRedis(): Promise<void> {

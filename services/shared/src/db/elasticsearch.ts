@@ -69,6 +69,7 @@ export async function ensureUsersIndex(): Promise<void> {
       analysis: {
         analyzer: {
           autocomplete: {
+            type: 'custom',
             tokenizer: 'autocomplete',
             filter: ['lowercase'],
           },

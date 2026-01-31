@@ -1,7 +1,10 @@
 import pino from 'pino';
 import { env } from './config/index.js';
 
-export const logger = pino({
+// pino is exported as default in ESM
+const createPino = pino.default ?? pino;
+
+export const logger = createPino({
   level: env.LOG_LEVEL,
   transport:
     env.NODE_ENV === 'development'
