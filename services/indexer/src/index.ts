@@ -11,8 +11,7 @@ import {
 import {
   handleTransfer,
   handleUpdateListStorageLocation,
-  handleUpdateUser,
-  handleUpdateManager,
+  handleUpdateListMetadata,
   handleUpdateAccountMetadata,
   handleListOp,
 } from './handlers.js';
@@ -113,7 +112,7 @@ async function indexBaseListRegistry(fromBlock: bigint, toBlock: bigint): Promis
       from: log.args.from!,
       to: log.args.to!,
       tokenId: log.args.tokenId!,
-    });
+    }, contractAddress);
   }
 
   // UpdateListStorageLocation events
@@ -135,50 +134,6 @@ async function indexBaseListRegistry(fromBlock: bigint, toBlock: bigint): Promis
     await handleUpdateListStorageLocation(log as Log, {
       tokenId: log.args.tokenId!,
       listStorageLocation: log.args.listStorageLocation! as `0x${string}`,
-    });
-  }
-
-  // UpdateUser events
-  const userLogs = await baseClient.getLogs({
-    address: contractAddress,
-    event: {
-      type: 'event',
-      name: 'UpdateUser',
-      inputs: [
-        { indexed: true, name: 'tokenId', type: 'uint256' },
-        { indexed: true, name: 'user', type: 'address' },
-      ],
-    },
-    fromBlock,
-    toBlock,
-  });
-
-  for (const log of userLogs) {
-    await handleUpdateUser(log as Log, {
-      tokenId: log.args.tokenId!,
-      user: log.args.user!,
-    });
-  }
-
-  // UpdateManager events
-  const managerLogs = await baseClient.getLogs({
-    address: contractAddress,
-    event: {
-      type: 'event',
-      name: 'UpdateManager',
-      inputs: [
-        { indexed: true, name: 'tokenId', type: 'uint256' },
-        { indexed: true, name: 'manager', type: 'address' },
-      ],
-    },
-    fromBlock,
-    toBlock,
-  });
-
-  for (const log of managerLogs) {
-    await handleUpdateManager(log as Log, {
-      tokenId: log.args.tokenId!,
-      manager: log.args.manager!,
     });
   }
 
@@ -218,7 +173,8 @@ async function indexBaseAccountMetadata(fromBlock: bigint, toBlock: bigint): Pro
 async function indexBaseListRecords(fromBlock: bigint, toBlock: bigint): Promise<void> {
   const contractAddress = CONTRACTS.ListRecords.base.address as `0x${string}`;
 
-  const logs = await baseClient.getLogs({
+  // ListOp events
+  const listOpLogs = await baseClient.getLogs({
     address: contractAddress,
     event: {
       type: 'event',
@@ -232,10 +188,39 @@ async function indexBaseListRecords(fromBlock: bigint, toBlock: bigint): Promise
     toBlock,
   });
 
-  for (const log of logs) {
+  for (const log of listOpLogs) {
     await handleListOp(
       log as Log,
       { slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`, op: log.args.op! as `0x${string}` },
+      8453,
+      contractAddress
+    );
+  }
+
+  // UpdateListMetadata events (for user/manager metadata)
+  const metadataLogs = await baseClient.getLogs({
+    address: contractAddress,
+    event: {
+      type: 'event',
+      name: 'UpdateListMetadata',
+      inputs: [
+        { indexed: true, name: 'slot', type: 'uint256' },
+        { indexed: false, name: 'key', type: 'string' },
+        { indexed: false, name: 'value', type: 'bytes' },
+      ],
+    },
+    fromBlock,
+    toBlock,
+  });
+
+  for (const log of metadataLogs) {
+    await handleUpdateListMetadata(
+      log as Log,
+      {
+        slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
+        key: log.args.key!,
+        value: log.args.value! as `0x${string}`,
+      },
       8453,
       contractAddress
     );
@@ -288,7 +273,8 @@ async function runBaseIndexer(startBlock: bigint): Promise<void> {
 async function indexOptimismListRecords(fromBlock: bigint, toBlock: bigint): Promise<void> {
   const contractAddress = CONTRACTS.ListRecords.optimism.address as `0x${string}`;
 
-  const logs = await optimismClient.getLogs({
+  // ListOp events
+  const listOpLogs = await optimismClient.getLogs({
     address: contractAddress,
     event: {
       type: 'event',
@@ -302,10 +288,39 @@ async function indexOptimismListRecords(fromBlock: bigint, toBlock: bigint): Pro
     toBlock,
   });
 
-  for (const log of logs) {
+  for (const log of listOpLogs) {
     await handleListOp(
       log as Log,
       { slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`, op: log.args.op! as `0x${string}` },
+      10,
+      contractAddress
+    );
+  }
+
+  // UpdateListMetadata events (for user/manager metadata)
+  const metadataLogs = await optimismClient.getLogs({
+    address: contractAddress,
+    event: {
+      type: 'event',
+      name: 'UpdateListMetadata',
+      inputs: [
+        { indexed: true, name: 'slot', type: 'uint256' },
+        { indexed: false, name: 'key', type: 'string' },
+        { indexed: false, name: 'value', type: 'bytes' },
+      ],
+    },
+    fromBlock,
+    toBlock,
+  });
+
+  for (const log of metadataLogs) {
+    await handleUpdateListMetadata(
+      log as Log,
+      {
+        slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
+        key: log.args.key!,
+        value: log.args.value! as `0x${string}`,
+      },
       10,
       contractAddress
     );
@@ -351,7 +366,8 @@ async function runOptimismIndexer(startBlock: bigint): Promise<void> {
 async function indexEthereumListRecords(fromBlock: bigint, toBlock: bigint): Promise<void> {
   const contractAddress = CONTRACTS.ListRecords.ethereum.address as `0x${string}`;
 
-  const logs = await mainnetClient.getLogs({
+  // ListOp events
+  const listOpLogs = await mainnetClient.getLogs({
     address: contractAddress,
     event: {
       type: 'event',
@@ -365,10 +381,39 @@ async function indexEthereumListRecords(fromBlock: bigint, toBlock: bigint): Pro
     toBlock,
   });
 
-  for (const log of logs) {
+  for (const log of listOpLogs) {
     await handleListOp(
       log as Log,
       { slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`, op: log.args.op! as `0x${string}` },
+      1,
+      contractAddress
+    );
+  }
+
+  // UpdateListMetadata events (for user/manager metadata)
+  const metadataLogs = await mainnetClient.getLogs({
+    address: contractAddress,
+    event: {
+      type: 'event',
+      name: 'UpdateListMetadata',
+      inputs: [
+        { indexed: true, name: 'slot', type: 'uint256' },
+        { indexed: false, name: 'key', type: 'string' },
+        { indexed: false, name: 'value', type: 'bytes' },
+      ],
+    },
+    fromBlock,
+    toBlock,
+  });
+
+  for (const log of metadataLogs) {
+    await handleUpdateListMetadata(
+      log as Log,
+      {
+        slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
+        key: log.args.key!,
+        value: log.args.value! as `0x${string}`,
+      },
       1,
       contractAddress
     );

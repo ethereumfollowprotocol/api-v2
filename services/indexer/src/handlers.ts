@@ -60,22 +60,24 @@ function parseRecord(data: `0x${string}`): {
 
 export async function handleTransfer(
   log: Log,
-  args: { from: string; to: string; tokenId: bigint }
+  args: { from: string; to: string; tokenId: bigint },
+  contractAddress: string
 ): Promise<void> {
   const { from, to, tokenId } = args;
 
   logger.debug({ tokenId: tokenId.toString(), from, to }, 'Processing Transfer');
 
   // Insert or update list
+  // nft_chain_id is always Base (8453) since ListRegistry is only on Base
   await query(
     `
-    INSERT INTO efp_lists (token_id, owner, created_at, updated_at)
-    VALUES ($1, $2, NOW(), NOW())
+    INSERT INTO efp_lists (token_id, owner, nft_chain_id, nft_contract_address, created_at, updated_at)
+    VALUES ($1, $2, 8453, $3, NOW(), NOW())
     ON CONFLICT (token_id) DO UPDATE SET
       owner = EXCLUDED.owner,
       updated_at = NOW()
   `,
-    [tokenId.toString(), to.toLowerCase()]
+    [tokenId.toString(), to.toLowerCase(), contractAddress.toLowerCase()]
   );
 }
 
@@ -120,42 +122,54 @@ export async function handleUpdateListStorageLocation(
   );
 }
 
-export async function handleUpdateUser(
+export async function handleUpdateListMetadata(
   log: Log,
-  args: { tokenId: bigint; user: string }
+  args: { slot: `0x${string}`; key: string; value: `0x${string}` },
+  chainId: number,
+  contractAddress: string
 ): Promise<void> {
-  const { tokenId, user } = args;
+  const { slot, key, value } = args;
 
-  logger.debug({ tokenId: tokenId.toString(), user }, 'Processing UpdateUser');
+  logger.debug({ slot, key, chainId }, 'Processing UpdateListMetadata');
 
-  await query(
-    `
-    UPDATE efp_lists SET
-      "user" = $2,
-      updated_at = NOW()
-    WHERE token_id = $1
-  `,
-    [tokenId.toString(), user.toLowerCase()]
-  );
-}
+  // The slot corresponds to list_storage_location_slot in efp_lists
+  // We need to find the list by its storage location and update the metadata
 
-export async function handleUpdateManager(
-  log: Log,
-  args: { tokenId: bigint; manager: string }
-): Promise<void> {
-  const { tokenId, manager } = args;
+  if (key === 'user') {
+    // Value is a 20-byte address (40 hex chars after 0x)
+    const userAddress = '0x' + value.slice(2, 42).toLowerCase();
 
-  logger.debug({ tokenId: tokenId.toString(), manager }, 'Processing UpdateManager');
+    await query(
+      `
+      UPDATE efp_lists SET
+        "user" = $4,
+        updated_at = NOW()
+      WHERE list_storage_location_chain_id = $1
+        AND list_storage_location_contract_address = $2
+        AND list_storage_location_slot = $3
+    `,
+      [chainId, contractAddress.toLowerCase(), slot, userAddress]
+    );
 
-  await query(
-    `
-    UPDATE efp_lists SET
-      manager = $2,
-      updated_at = NOW()
-    WHERE token_id = $1
-  `,
-    [tokenId.toString(), manager.toLowerCase()]
-  );
+    logger.info({ slot, user: userAddress, chainId }, 'Updated list user');
+  } else if (key === 'manager') {
+    // Value is a 20-byte address (40 hex chars after 0x)
+    const managerAddress = '0x' + value.slice(2, 42).toLowerCase();
+
+    await query(
+      `
+      UPDATE efp_lists SET
+        manager = $4,
+        updated_at = NOW()
+      WHERE list_storage_location_chain_id = $1
+        AND list_storage_location_contract_address = $2
+        AND list_storage_location_slot = $3
+    `,
+      [chainId, contractAddress.toLowerCase(), slot, managerAddress]
+    );
+
+    logger.info({ slot, manager: managerAddress, chainId }, 'Updated list manager');
+  }
 }
 
 export async function handleUpdateAccountMetadata(
