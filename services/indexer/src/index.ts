@@ -196,7 +196,7 @@ async function indexBaseAccountMetadata(fromBlock: bigint, toBlock: bigint): Pro
       inputs: [
         { indexed: true, name: 'addr', type: 'address' },
         { indexed: false, name: 'key', type: 'string' },
-        { indexed: false, name: 'value', type: 'string' },
+        { indexed: false, name: 'value', type: 'bytes' },
       ],
     },
     fromBlock,
@@ -206,7 +206,7 @@ async function indexBaseAccountMetadata(fromBlock: bigint, toBlock: bigint): Pro
   for (const log of logs) {
     await handleUpdateAccountMetadata(
       log as Log,
-      { addr: log.args.addr!, key: log.args.key!, value: log.args.value! },
+      { addr: log.args.addr!, key: log.args.key!, value: log.args.value! as `0x${string}` },
       8453,
       contractAddress
     );

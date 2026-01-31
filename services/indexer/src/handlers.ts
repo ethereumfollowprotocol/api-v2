@@ -160,13 +160,16 @@ export async function handleUpdateManager(
 
 export async function handleUpdateAccountMetadata(
   log: Log,
-  args: { addr: string; key: string; value: string },
+  args: { addr: string; key: string; value: `0x${string}` },
   chainId: number,
   contractAddress: string
 ): Promise<void> {
   const { addr, key, value } = args;
 
-  logger.debug({ address: addr, key, value }, 'Processing UpdateAccountMetadata');
+  // Convert bytes to string - for primary-list, this is a hex-encoded token ID
+  const valueStr = value;
+
+  logger.debug({ address: addr, key, value: valueStr }, 'Processing UpdateAccountMetadata');
 
   await query(
     `
@@ -176,7 +179,7 @@ export async function handleUpdateAccountMetadata(
       value = EXCLUDED.value,
       updated_at = NOW()
   `,
-    [chainId, contractAddress.toLowerCase(), addr.toLowerCase(), key, value]
+    [chainId, contractAddress.toLowerCase(), addr.toLowerCase(), key, valueStr]
   );
 }
 
