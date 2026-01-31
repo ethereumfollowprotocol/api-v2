@@ -13,14 +13,18 @@ import {
   handleUpdateListStorageLocation,
   handleUpdateListMetadata,
   handleUpdateAccountMetadata,
-  handleListOp,
+  parseListOpsBatch,
+  batchInsertRecords,
+  batchInsertTags,
+  batchDeleteRecords,
+  batchDeleteTags,
 } from './handlers.js';
 
 const logger = createLogger('indexer');
 
 // Configuration
 const POLL_INTERVAL = 2000; // 2 seconds
-const BATCH_SIZE = 1000; // blocks per batch
+const BATCH_SIZE = 5000; // blocks per batch (increased for faster catchup)
 const CONFIRMATIONS = 2; // wait for confirmations
 
 // Create clients for each chain
@@ -173,46 +177,60 @@ async function indexBaseAccountMetadata(fromBlock: bigint, toBlock: bigint): Pro
 async function indexBaseListRecords(fromBlock: bigint, toBlock: bigint): Promise<void> {
   const contractAddress = CONTRACTS.ListRecords.base.address as `0x${string}`;
 
-  // ListOp events
-  const listOpLogs = await baseClient.getLogs({
-    address: contractAddress,
-    event: {
-      type: 'event',
-      name: 'ListOp',
-      inputs: [
-        { indexed: true, name: 'slot', type: 'uint256' },
-        { indexed: false, name: 'op', type: 'bytes' },
-      ],
-    },
-    fromBlock,
-    toBlock,
-  });
+  // Fetch ListOp and UpdateListMetadata events in parallel
+  const [listOpLogs, metadataLogs] = await Promise.all([
+    baseClient.getLogs({
+      address: contractAddress,
+      event: {
+        type: 'event',
+        name: 'ListOp',
+        inputs: [
+          { indexed: true, name: 'slot', type: 'uint256' },
+          { indexed: false, name: 'op', type: 'bytes' },
+        ],
+      },
+      fromBlock,
+      toBlock,
+    }),
+    baseClient.getLogs({
+      address: contractAddress,
+      event: {
+        type: 'event',
+        name: 'UpdateListMetadata',
+        inputs: [
+          { indexed: true, name: 'slot', type: 'uint256' },
+          { indexed: false, name: 'key', type: 'string' },
+          { indexed: false, name: 'value', type: 'bytes' },
+        ],
+      },
+      fromBlock,
+      toBlock,
+    }),
+  ]);
 
-  for (const log of listOpLogs) {
-    await handleListOp(
-      log as Log,
-      { slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`, op: log.args.op! as `0x${string}` },
-      8453,
-      contractAddress
-    );
+  // Batch process ListOp events
+  if (listOpLogs.length > 0) {
+    const parsedOps = listOpLogs.map(log => ({
+      slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
+      op: log.args.op! as `0x${string}`,
+    }));
+
+    const { recordInserts, tagInserts, recordDeletes, tagDeletes } = parseListOpsBatch(parsedOps, 8453, contractAddress);
+
+    // Execute batch operations
+    await Promise.all([
+      batchInsertRecords(recordInserts),
+      batchInsertTags(tagInserts),
+    ]);
+
+    // Deletes need to happen after inserts to handle edge cases
+    await batchDeleteRecords(recordDeletes);
+    await batchDeleteTags(tagDeletes);
+
+    logger.info({ chain: 'base', listOps: listOpLogs.length, inserts: recordInserts.length, deletes: recordDeletes.length }, 'Processed ListOps');
   }
 
-  // UpdateListMetadata events (for user/manager metadata)
-  const metadataLogs = await baseClient.getLogs({
-    address: contractAddress,
-    event: {
-      type: 'event',
-      name: 'UpdateListMetadata',
-      inputs: [
-        { indexed: true, name: 'slot', type: 'uint256' },
-        { indexed: false, name: 'key', type: 'string' },
-        { indexed: false, name: 'value', type: 'bytes' },
-      ],
-    },
-    fromBlock,
-    toBlock,
-  });
-
+  // Process metadata events (these are less frequent, keep sequential)
   for (const log of metadataLogs) {
     await handleUpdateListMetadata(
       log as Log,
@@ -273,45 +291,56 @@ async function runBaseIndexer(startBlock: bigint): Promise<void> {
 async function indexOptimismListRecords(fromBlock: bigint, toBlock: bigint): Promise<void> {
   const contractAddress = CONTRACTS.ListRecords.optimism.address as `0x${string}`;
 
-  // ListOp events
-  const listOpLogs = await optimismClient.getLogs({
-    address: contractAddress,
-    event: {
-      type: 'event',
-      name: 'ListOp',
-      inputs: [
-        { indexed: true, name: 'slot', type: 'uint256' },
-        { indexed: false, name: 'op', type: 'bytes' },
-      ],
-    },
-    fromBlock,
-    toBlock,
-  });
+  // Fetch ListOp and UpdateListMetadata events in parallel
+  const [listOpLogs, metadataLogs] = await Promise.all([
+    optimismClient.getLogs({
+      address: contractAddress,
+      event: {
+        type: 'event',
+        name: 'ListOp',
+        inputs: [
+          { indexed: true, name: 'slot', type: 'uint256' },
+          { indexed: false, name: 'op', type: 'bytes' },
+        ],
+      },
+      fromBlock,
+      toBlock,
+    }),
+    optimismClient.getLogs({
+      address: contractAddress,
+      event: {
+        type: 'event',
+        name: 'UpdateListMetadata',
+        inputs: [
+          { indexed: true, name: 'slot', type: 'uint256' },
+          { indexed: false, name: 'key', type: 'string' },
+          { indexed: false, name: 'value', type: 'bytes' },
+        ],
+      },
+      fromBlock,
+      toBlock,
+    }),
+  ]);
 
-  for (const log of listOpLogs) {
-    await handleListOp(
-      log as Log,
-      { slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`, op: log.args.op! as `0x${string}` },
-      10,
-      contractAddress
-    );
+  // Batch process ListOp events
+  if (listOpLogs.length > 0) {
+    const parsedOps = listOpLogs.map(log => ({
+      slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
+      op: log.args.op! as `0x${string}`,
+    }));
+
+    const { recordInserts, tagInserts, recordDeletes, tagDeletes } = parseListOpsBatch(parsedOps, 10, contractAddress);
+
+    await Promise.all([
+      batchInsertRecords(recordInserts),
+      batchInsertTags(tagInserts),
+    ]);
+
+    await batchDeleteRecords(recordDeletes);
+    await batchDeleteTags(tagDeletes);
+
+    logger.info({ chain: 'optimism', listOps: listOpLogs.length, inserts: recordInserts.length, deletes: recordDeletes.length }, 'Processed ListOps');
   }
-
-  // UpdateListMetadata events (for user/manager metadata)
-  const metadataLogs = await optimismClient.getLogs({
-    address: contractAddress,
-    event: {
-      type: 'event',
-      name: 'UpdateListMetadata',
-      inputs: [
-        { indexed: true, name: 'slot', type: 'uint256' },
-        { indexed: false, name: 'key', type: 'string' },
-        { indexed: false, name: 'value', type: 'bytes' },
-      ],
-    },
-    fromBlock,
-    toBlock,
-  });
 
   for (const log of metadataLogs) {
     await handleUpdateListMetadata(
@@ -366,45 +395,56 @@ async function runOptimismIndexer(startBlock: bigint): Promise<void> {
 async function indexEthereumListRecords(fromBlock: bigint, toBlock: bigint): Promise<void> {
   const contractAddress = CONTRACTS.ListRecords.ethereum.address as `0x${string}`;
 
-  // ListOp events
-  const listOpLogs = await mainnetClient.getLogs({
-    address: contractAddress,
-    event: {
-      type: 'event',
-      name: 'ListOp',
-      inputs: [
-        { indexed: true, name: 'slot', type: 'uint256' },
-        { indexed: false, name: 'op', type: 'bytes' },
-      ],
-    },
-    fromBlock,
-    toBlock,
-  });
+  // Fetch ListOp and UpdateListMetadata events in parallel
+  const [listOpLogs, metadataLogs] = await Promise.all([
+    mainnetClient.getLogs({
+      address: contractAddress,
+      event: {
+        type: 'event',
+        name: 'ListOp',
+        inputs: [
+          { indexed: true, name: 'slot', type: 'uint256' },
+          { indexed: false, name: 'op', type: 'bytes' },
+        ],
+      },
+      fromBlock,
+      toBlock,
+    }),
+    mainnetClient.getLogs({
+      address: contractAddress,
+      event: {
+        type: 'event',
+        name: 'UpdateListMetadata',
+        inputs: [
+          { indexed: true, name: 'slot', type: 'uint256' },
+          { indexed: false, name: 'key', type: 'string' },
+          { indexed: false, name: 'value', type: 'bytes' },
+        ],
+      },
+      fromBlock,
+      toBlock,
+    }),
+  ]);
 
-  for (const log of listOpLogs) {
-    await handleListOp(
-      log as Log,
-      { slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`, op: log.args.op! as `0x${string}` },
-      1,
-      contractAddress
-    );
+  // Batch process ListOp events
+  if (listOpLogs.length > 0) {
+    const parsedOps = listOpLogs.map(log => ({
+      slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
+      op: log.args.op! as `0x${string}`,
+    }));
+
+    const { recordInserts, tagInserts, recordDeletes, tagDeletes } = parseListOpsBatch(parsedOps, 1, contractAddress);
+
+    await Promise.all([
+      batchInsertRecords(recordInserts),
+      batchInsertTags(tagInserts),
+    ]);
+
+    await batchDeleteRecords(recordDeletes);
+    await batchDeleteTags(tagDeletes);
+
+    logger.info({ chain: 'ethereum', listOps: listOpLogs.length, inserts: recordInserts.length, deletes: recordDeletes.length }, 'Processed ListOps');
   }
-
-  // UpdateListMetadata events (for user/manager metadata)
-  const metadataLogs = await mainnetClient.getLogs({
-    address: contractAddress,
-    event: {
-      type: 'event',
-      name: 'UpdateListMetadata',
-      inputs: [
-        { indexed: true, name: 'slot', type: 'uint256' },
-        { indexed: false, name: 'key', type: 'string' },
-        { indexed: false, name: 'value', type: 'bytes' },
-      ],
-    },
-    fromBlock,
-    toBlock,
-  });
 
   for (const log of metadataLogs) {
     await handleUpdateListMetadata(

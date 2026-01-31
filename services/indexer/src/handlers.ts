@@ -3,6 +3,197 @@ import type { Log } from 'viem';
 
 const logger = createLogger('indexer-handlers');
 
+// ============================================================
+// Batch processing types and functions
+// ============================================================
+
+interface RecordInsert {
+  chainId: number;
+  contractAddress: string;
+  slot: string;
+  record: string;
+  recordVersion: number;
+  recordType: number;
+  recordData: string;
+}
+
+interface TagInsert {
+  chainId: number;
+  contractAddress: string;
+  slot: string;
+  record: string;
+  tag: string;
+}
+
+interface RecordDelete {
+  chainId: number;
+  contractAddress: string;
+  slot: string;
+  record: string;
+}
+
+interface TagDelete {
+  chainId: number;
+  contractAddress: string;
+  slot: string;
+  record: string;
+  tag: string;
+}
+
+export async function batchInsertRecords(records: RecordInsert[]): Promise<void> {
+  if (records.length === 0) return;
+
+  // Build multi-value INSERT
+  const values: unknown[] = [];
+  const placeholders: string[] = [];
+
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
+    const offset = i * 7;
+    placeholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, NOW())`);
+    values.push(r.chainId, r.contractAddress, r.slot, r.record, r.recordVersion, r.recordType, r.recordData);
+  }
+
+  await query(
+    `INSERT INTO efp_list_records (chain_id, contract_address, slot, record, record_version, record_type, record_data, created_at)
+     VALUES ${placeholders.join(', ')}
+     ON CONFLICT (chain_id, contract_address, slot, record) DO NOTHING`,
+    values
+  );
+
+  logger.info({ count: records.length }, 'Batch inserted records');
+}
+
+export async function batchInsertTags(tags: TagInsert[]): Promise<void> {
+  if (tags.length === 0) return;
+
+  const values: unknown[] = [];
+  const placeholders: string[] = [];
+
+  for (let i = 0; i < tags.length; i++) {
+    const t = tags[i];
+    const offset = i * 5;
+    placeholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, NOW())`);
+    values.push(t.chainId, t.contractAddress, t.slot, t.record, t.tag);
+  }
+
+  await query(
+    `INSERT INTO efp_list_record_tags (chain_id, contract_address, slot, record, tag, created_at)
+     VALUES ${placeholders.join(', ')}
+     ON CONFLICT (chain_id, contract_address, slot, record, tag) DO NOTHING`,
+    values
+  );
+
+  logger.info({ count: tags.length }, 'Batch inserted tags');
+}
+
+export async function batchDeleteRecords(deletes: RecordDelete[]): Promise<void> {
+  if (deletes.length === 0) return;
+
+  // Use a single query with ANY for batch deletes
+  for (const d of deletes) {
+    await query(
+      `DELETE FROM efp_list_records WHERE chain_id = $1 AND contract_address = $2 AND slot = $3 AND record = $4`,
+      [d.chainId, d.contractAddress, d.slot, d.record]
+    );
+    await query(
+      `DELETE FROM efp_list_record_tags WHERE chain_id = $1 AND contract_address = $2 AND slot = $3 AND record = $4`,
+      [d.chainId, d.contractAddress, d.slot, d.record]
+    );
+  }
+
+  logger.info({ count: deletes.length }, 'Batch deleted records');
+}
+
+export async function batchDeleteTags(deletes: TagDelete[]): Promise<void> {
+  if (deletes.length === 0) return;
+
+  for (const d of deletes) {
+    await query(
+      `DELETE FROM efp_list_record_tags WHERE chain_id = $1 AND contract_address = $2 AND slot = $3 AND record = $4 AND tag = $5`,
+      [d.chainId, d.contractAddress, d.slot, d.record, d.tag]
+    );
+  }
+
+  logger.info({ count: deletes.length }, 'Batch deleted tags');
+}
+
+// Parse and categorize a batch of ListOps for bulk processing
+export function parseListOpsBatch(
+  logs: Array<{ slot: `0x${string}`; op: `0x${string}` }>,
+  chainId: number,
+  contractAddress: string
+): {
+  recordInserts: RecordInsert[];
+  tagInserts: TagInsert[];
+  recordDeletes: RecordDelete[];
+  tagDeletes: TagDelete[];
+} {
+  const recordInserts: RecordInsert[] = [];
+  const tagInserts: TagInsert[] = [];
+  const recordDeletes: RecordDelete[] = [];
+  const tagDeletes: TagDelete[] = [];
+
+  for (const { slot, op } of logs) {
+    const parsed = parseListOp(op);
+    if (!parsed) continue;
+
+    const { opcode, data } = parsed;
+
+    if (opcode === 1) {
+      // Add record
+      const record = parseRecord(data);
+      if (!record) continue;
+
+      recordInserts.push({
+        chainId,
+        contractAddress: contractAddress.toLowerCase(),
+        slot,
+        record: data,
+        recordVersion: record.version,
+        recordType: record.recordType,
+        recordData: record.recordData,
+      });
+    } else if (opcode === 2) {
+      // Remove record
+      recordDeletes.push({
+        chainId,
+        contractAddress: contractAddress.toLowerCase(),
+        slot,
+        record: data,
+      });
+    } else if (opcode === 3) {
+      // Add tag
+      const recordHex = data.slice(0, 46) as `0x${string}`;
+      const tagHex = data.slice(46);
+      const tag = Buffer.from(tagHex, 'hex').toString('utf8').replace(/\0/g, '');
+
+      tagInserts.push({
+        chainId,
+        contractAddress: contractAddress.toLowerCase(),
+        slot,
+        record: recordHex,
+        tag,
+      });
+    } else if (opcode === 4) {
+      // Remove tag
+      const recordHex = data.slice(0, 46) as `0x${string}`;
+      const tagHex = data.slice(46);
+      const tag = Buffer.from(tagHex, 'hex').toString('utf8').replace(/\0/g, '');
+
+      tagDeletes.push({
+        chainId,
+        contractAddress: contractAddress.toLowerCase(),
+        slot,
+        record: recordHex,
+        tag,
+      });
+    }
+  }
+
+  return { recordInserts, tagInserts, recordDeletes, tagDeletes };
+}
+
 // Parse List Storage Location (86 bytes)
 // Format: version (1) + locationType (1) + chainId (32) + contractAddress (20) + slot (32)
 function parseListStorageLocation(lsl: `0x${string}`): {
