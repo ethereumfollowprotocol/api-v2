@@ -21,7 +21,7 @@ const logger = createLogger('indexer');
 
 // Configuration
 const POLL_INTERVAL = 2000; // 2 seconds
-const BATCH_SIZE = 100; // blocks per batch (keep small to avoid memory issues with large log responses)
+const BATCH_SIZE = 1000; // blocks per batch
 const CONFIRMATIONS = 2; // wait for confirmations
 
 // Create clients for each chain
@@ -224,7 +224,7 @@ async function indexBaseListRecords(fromBlock: bigint, toBlock: bigint): Promise
       type: 'event',
       name: 'ListOp',
       inputs: [
-        { indexed: true, name: 'slot', type: 'bytes32' },
+        { indexed: true, name: 'slot', type: 'uint256' },
         { indexed: false, name: 'op', type: 'bytes' },
       ],
     },
@@ -235,7 +235,7 @@ async function indexBaseListRecords(fromBlock: bigint, toBlock: bigint): Promise
   for (const log of logs) {
     await handleListOp(
       log as Log,
-      { slot: log.args.slot! as `0x${string}`, op: log.args.op! as `0x${string}` },
+      { slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`, op: log.args.op! as `0x${string}` },
       8453,
       contractAddress
     );
@@ -294,7 +294,7 @@ async function indexOptimismListRecords(fromBlock: bigint, toBlock: bigint): Pro
       type: 'event',
       name: 'ListOp',
       inputs: [
-        { indexed: true, name: 'slot', type: 'bytes32' },
+        { indexed: true, name: 'slot', type: 'uint256' },
         { indexed: false, name: 'op', type: 'bytes' },
       ],
     },
@@ -305,7 +305,7 @@ async function indexOptimismListRecords(fromBlock: bigint, toBlock: bigint): Pro
   for (const log of logs) {
     await handleListOp(
       log as Log,
-      { slot: log.args.slot! as `0x${string}`, op: log.args.op! as `0x${string}` },
+      { slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`, op: log.args.op! as `0x${string}` },
       10,
       contractAddress
     );
@@ -357,7 +357,7 @@ async function indexEthereumListRecords(fromBlock: bigint, toBlock: bigint): Pro
       type: 'event',
       name: 'ListOp',
       inputs: [
-        { indexed: true, name: 'slot', type: 'bytes32' },
+        { indexed: true, name: 'slot', type: 'uint256' },
         { indexed: false, name: 'op', type: 'bytes' },
       ],
     },
@@ -368,7 +368,7 @@ async function indexEthereumListRecords(fromBlock: bigint, toBlock: bigint): Pro
   for (const log of logs) {
     await handleListOp(
       log as Log,
-      { slot: log.args.slot! as `0x${string}`, op: log.args.op! as `0x${string}` },
+      { slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`, op: log.args.op! as `0x${string}` },
       1,
       contractAddress
     );
