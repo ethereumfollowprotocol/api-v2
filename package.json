@@ -7,7 +7,7 @@
     "services/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces",
+    "build": "npm run build --workspace=@efp/shared && npm run build --workspace=@efp/api --workspace=@efp/indexer --workspace=@efp/orchestrator --workspace=@efp/workers --workspace=@efp/wal-listener",
     "dev:api": "dotenv -- tsx watch services/api/src/index.ts",
     "dev:orchestrator": "dotenv -- tsx watch services/orchestrator/src/index.ts",
     "dev:wal-listener": "dotenv -- tsx watch services/wal-listener/src/index.ts",

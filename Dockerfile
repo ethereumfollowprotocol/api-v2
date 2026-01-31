@@ -18,7 +18,8 @@ RUN npm ci
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+# Build shared first, then all other packages
+RUN npm run build --workspace=@efp/shared && npm run build --workspaces --if-present
 
 # Shared runtime base
 FROM node:20-alpine AS runtime
