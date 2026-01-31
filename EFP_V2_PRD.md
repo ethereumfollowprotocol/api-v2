@@ -110,6 +110,167 @@ Rewrite the EFP backend infrastructure to handle increased traffic load. The cur
 
 ---
 
+## Contract Addresses & Events
+
+### Production Contract Addresses
+
+#### Core Contracts (Mainnet)
+
+| Contract | Chain | Chain ID | Address |
+|----------|-------|----------|---------|
+| **ListRegistry** | Base | 8453 | `0x0E688f5DCa4a0a4729946ACbC44C792341714e08` |
+| **AccountMetadata** | Base | 8453 | `0x5289fE5daBC021D02FDDf23d4a4DF96F4E0F17EF` |
+| **ListRecords** | Base | 8453 | `0x41Aa48Ef3c0446b46a5b1cc6337FF3d3716E2A33` |
+| **ListRecords** | Optimism | 10 | `0x4Ca00413d850DcFa3516E14d21DAE2772F2aCb85` |
+| **ListRecords** | Ethereum | 1 | `0x5289fE5daBC021D02FDDf23d4a4DF96F4E0F17EF` |
+| **ListMinter** | Base | 8453 | `0xDb17Bfc64aBf7B7F080a49f0Bbbf799dDbb48Ce5` |
+
+#### Testnet Contracts
+
+| Contract | Chain | Chain ID | Address |
+|----------|-------|----------|---------|
+| **AccountMetadata** | Base Sepolia | 84532 | `0xDAf8088C4DCC8113F49192336cd594300464af8D` |
+| **ListRecords** | Base Sepolia | 84532 | `0x63B4e2Bb1E9b9D02AEF3Dc473c5B4b590219FA5e` |
+| **ListRecords** | OP Sepolia | 11155420 | `0x2f644bfec9C8E9ad822744E17d9Bf27A42e039fE` |
+| **ListRecords** | ETH Sepolia | 11155111 | `0xf8c6aa2a83799d0f984CA501F85f9e634F97FEf2` |
+
+### Events to Index
+
+#### ListRegistry Contract (Base only)
+```solidity
+// NFT minted or transferred
+event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
+
+// List storage location updated
+event UpdateListStorageLocation(uint256 indexed tokenId, bytes listStorageLocation);
+```
+
+#### AccountMetadata Contract (Base only)
+```solidity
+// User set metadata (e.g., primary-list)
+event UpdateAccountMetadata(address indexed addr, string key, bytes value);
+```
+
+#### ListRecords Contract (Base, Optimism, Ethereum)
+```solidity
+// Follow/unfollow/tag/untag operation
+event ListOp(uint256 indexed slot, bytes op);
+
+// List metadata updated (manager, user)
+event UpdateListMetadata(uint256 indexed slot, string key, bytes value);
+```
+
+---
+
+## Primary List Validation
+
+This is the **core business logic** that determines if a follow relationship "counts" in the social graph.
+
+### The Rule
+
+> A follow from User A to User B only counts if:
+> 1. User A has set a **primary list** in AccountMetadata
+> 2. The follow record exists in the list that IS User A's primary list
+> 3. The record is NOT tagged with `block` or `mute` (for follower counts)
+
+### Validation Chain
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    IS THIS A VALID FOLLOW?                                   │
+│                                                                             │
+│  Given: A ListOp (follow) on chain X, contract Y, slot Z, for address B    │
+│                                                                             │
+│  Step 1: Find the list                                                      │
+│  ─────────────────────────────────────────────────────────────────────────  │
+│  SELECT * FROM efp_lists                                                    │
+│  WHERE list_storage_location_chain_id = X                                   │
+│    AND list_storage_location_contract_address = Y                           │
+│    AND list_storage_location_slot = Z                                       │
+│  → Returns: token_id, user (the list owner)                                 │
+│                                                                             │
+│  Step 2: Check if this is the user's primary list                          │
+│  ─────────────────────────────────────────────────────────────────────────  │
+│  SELECT value FROM efp_account_metadata                                     │
+│  WHERE address = {user from step 1}                                         │
+│    AND key = 'primary-list'                                                 │
+│  → Returns: hex-encoded token_id                                            │
+│  → Convert: convert_hex_to_bigint(value) = primary_list_token_id           │
+│                                                                             │
+│  Step 3: Compare                                                            │
+│  ─────────────────────────────────────────────────────────────────────────  │
+│  IF token_id (from step 1) == primary_list_token_id (from step 2):         │
+│    ✅ This IS a primary list follow → counts in social graph               │
+│  ELSE:                                                                      │
+│    ❌ This is NOT a primary list follow → does not count                   │
+│                                                                             │
+│  Step 4: Check tags (for counting)                                          │
+│  ─────────────────────────────────────────────────────────────────────────  │
+│  IF record has 'block' or 'mute' tag:                                       │
+│    → Include in blocked_by_count / muted_by_count                          │
+│    → EXCLUDE from followers_count                                           │
+│  ELSE:                                                                      │
+│    → Include in followers_count                                             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### SQL Implementation
+
+```sql
+-- Check if a list operation is from a primary list
+CREATE OR REPLACE FUNCTION is_primary_list(
+    p_chain_id BIGINT,
+    p_contract_address VARCHAR(42),
+    p_slot BYTEA
+) RETURNS BOOLEAN AS $$
+DECLARE
+    v_token_id BIGINT;
+    v_user_address VARCHAR(42);
+    v_primary_list_id BIGINT;
+BEGIN
+    -- Step 1: Find the list and its user
+    SELECT token_id, "user"
+    INTO v_token_id, v_user_address
+    FROM efp_lists
+    WHERE list_storage_location_chain_id = p_chain_id
+      AND list_storage_location_contract_address = p_contract_address
+      AND list_storage_location_slot = p_slot;
+
+    IF v_token_id IS NULL OR v_user_address IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
+    -- Step 2: Get user's primary list
+    SELECT convert_hex_to_bigint(value::text)
+    INTO v_primary_list_id
+    FROM efp_account_metadata
+    WHERE address = v_user_address
+      AND "key" = 'primary-list';
+
+    IF v_primary_list_id IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
+    -- Step 3: Compare
+    RETURN v_token_id = v_primary_list_id;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+### Common Scenarios
+
+| Scenario | Valid Follow? | Counted in followers_count? |
+|----------|---------------|----------------------------|
+| User has no primary list set | ❌ No | No |
+| User follows from non-primary list | ❌ No | No |
+| User follows from primary list | ✅ Yes | Yes |
+| User follows + blocks from primary list | ✅ Yes | No (excluded) |
+| User follows + mutes from primary list | ✅ Yes | No (excluded) |
+| User changes primary list | Previous follows become invalid | Resync required |
+
+---
+
 ## Protocol Operations: Follows, Unfollows, Tags, and Untags
 
 This section explains how the EFP protocol encodes and processes social graph operations at the byte level.
