@@ -110,6 +110,257 @@ Rewrite the EFP backend infrastructure to handle increased traffic load. The cur
 
 ---
 
+## Protocol Operations: Follows, Unfollows, Tags, and Untags
+
+This section explains how the EFP protocol encodes and processes social graph operations at the byte level.
+
+### List Records
+
+A **List Record** represents an entry in a user's list (typically a followed address). Records are stored as byte arrays with the following structure:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      LIST RECORD (22 bytes for v1/type 1)   │
+├──────────────┬──────────────┬───────────────────────────────┤
+│ version (1)  │  type (1)    │  data (20 bytes for address)  │
+│    0x01      │    0x01      │  0x followed by 40 hex chars  │
+└──────────────┴──────────────┴───────────────────────────────┘
+```
+
+**Fields:**
+- **version** (1 byte): Schema version, currently `0x01`
+- **type** (1 byte): Record type, `0x01` = Ethereum address
+- **data** (variable): Type-specific data. For addresses, 20 bytes.
+
+**Example - Record for vitalik.eth:**
+```
+0x 01 01 d8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+   │  │  └─────────────────────────────────────────┘
+   │  │              Address (20 bytes)
+   │  └─ Type: 0x01 (address)
+   └──── Version: 0x01
+```
+
+### List Operations (ListOps)
+
+A **ListOp** is an instruction that modifies a list. Operations are emitted as events on the `ListRecords` contract and processed by the indexer.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      LIST OPERATION                          │
+├──────────────┬──────────────┬───────────────────────────────┤
+│ version (1)  │  opcode (1)  │  data (variable)              │
+│    0x01      │   0x01-04    │  record or record + tag       │
+└──────────────┴──────────────┴───────────────────────────────┘
+```
+
+**Fields:**
+- **version** (1 byte): Schema version, currently `0x01`
+- **opcode** (1 byte): Operation type (see table below)
+- **data** (variable): Operation-specific payload
+
+### The Four Operations
+
+| Opcode | Name | Description | Data Field |
+|--------|------|-------------|------------|
+| `0x01` | **Add Record** | Follow an address | ListRecord (22 bytes) |
+| `0x02` | **Remove Record** | Unfollow an address | ListRecord (22 bytes) |
+| `0x03` | **Tag Record** | Add a tag to an existing record | ListRecord (22 bytes) + Tag (UTF-8) |
+| `0x04` | **Untag Record** | Remove a tag from a record | ListRecord (22 bytes) + Tag (UTF-8) |
+
+### Operation Examples
+
+#### 1. Follow (Opcode 0x01)
+
+**Scenario**: User follows `0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045` (vitalik.eth)
+
+```
+ListOp bytes:
+0x 01 01 01 01 d8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+   │  │  └──────────────────────────────────────────────┘
+   │  │              ListRecord (22 bytes)
+   │  └─ Opcode: 0x01 (add record)
+   └──── Version: 0x01
+
+Breakdown of ListRecord:
+   01 01 d8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+   │  │  └─────────────────────────────────────────┘
+   │  │              Address being followed
+   │  └─ Record Type: 0x01 (address)
+   └──── Record Version: 0x01
+```
+
+**Result**: A new row is inserted into `efp_list_records` with the record bytes.
+
+#### 2. Unfollow (Opcode 0x02)
+
+**Scenario**: User unfollows the same address
+
+```
+ListOp bytes:
+0x 01 02 01 01 d8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+      │
+      └─ Opcode: 0x02 (remove record)
+```
+
+**Result**: The row is deleted from `efp_list_records`.
+
+#### 3. Tag (Opcode 0x03)
+
+**Scenario**: User adds the "top8" tag to vitalik.eth
+
+```
+ListOp bytes:
+0x 01 03 01 01 d8dA6BF26964aF9D7eEd9e03E53415D37aA96045 746f7038
+      │  └──────────────────────────────────────────────┘ └──────┘
+      │              ListRecord (22 bytes)                 "top8" (UTF-8)
+      └─ Opcode: 0x03 (tag record)
+
+UTF-8 encoding of "top8":
+  t    o    p    8
+  74   6f   70   38
+```
+
+**Result**: A new row is inserted into `efp_list_record_tags` linking the record to the tag.
+
+**Important**: You can only tag a record that exists. The record must be added (opcode 0x01) before it can be tagged (opcode 0x03).
+
+#### 4. Untag (Opcode 0x04)
+
+**Scenario**: User removes the "top8" tag from vitalik.eth
+
+```
+ListOp bytes:
+0x 01 04 01 01 d8dA6BF26964aF9D7eEd9e03E53415D37aA96045 746f7038
+      │
+      └─ Opcode: 0x04 (untag record)
+```
+
+**Result**: The row is deleted from `efp_list_record_tags`.
+
+### Tags
+
+Tags are UTF-8 strings associated with list records. They modify the semantic meaning of a follow relationship.
+
+#### Standard Tags
+
+| Tag | Meaning | Effect on Counts |
+|-----|---------|------------------|
+| `block` | Neither party should see each other's activity | **Excluded** from follower/following counts |
+| `mute` | Hide the muted account's activity from the user | **Excluded** from follower/following counts |
+| `top8` | Designate for display in "Top 8" feature | Included in counts, tracked separately |
+| *(no tag)* | Simple follow | Included in counts |
+
+#### Tag Precedence
+
+If both `block` and `mute` tags are present on the same record, `block` takes precedence.
+
+#### Tag Rules
+
+1. **Tags require a record**: You cannot tag an address you haven't followed. The follow (opcode 0x01) must happen first.
+
+2. **Tags don't create follows**: Adding a `block` tag doesn't automatically follow someone. You must:
+   - Add record (0x01) → Creates the follow
+   - Tag record (0x03) with "block" → Marks it as a block
+
+3. **Multiple tags**: A single record can have multiple tags (e.g., both "friend" and "top8").
+
+4. **Custom tags**: Users can create arbitrary tags (max 255 bytes, alphanumeric + emojis, normalized to lowercase).
+
+5. **Tags only count if followed**: A tag on an address only "counts" if that address is also followed by the user (has an active record).
+
+#### Tag Constraints
+
+- Maximum length: 255 bytes
+- Encoding: UTF-8
+- Normalization: Lowercase
+- Allowed characters: Alphanumeric and most emojis
+- No leading/trailing whitespace
+
+### How Tags Affect Derived Tables
+
+When processing tags in the WAL-listener and workers:
+
+```
+efp_list_records (follow exists)
+        │
+        ├─── efp_list_record_tags (tags on that follow)
+        │           │
+        │           ├─── tag = 'block' → is_blocked = TRUE
+        │           ├─── tag = 'mute'  → is_muted = TRUE
+        │           └─── tag = 'top8'  → include in top8_count
+        │
+        └─── efp_followers / efp_following
+                    │
+                    ├─── is_blocked = TRUE → EXCLUDE from followers_count
+                    ├─── is_muted = TRUE   → EXCLUDE from followers_count
+                    └─── otherwise         → INCLUDE in followers_count
+```
+
+### Example: Complete User Flow
+
+**User A wants to follow User B, add them to top8, then later block them:**
+
+```
+Step 1: Follow User B
+────────────────────
+ListOp: 0x 01 01 01 01 <address_B>
+Result:
+  - efp_list_records: new row
+  - efp_followers: B gains A as follower (is_blocked=false, is_muted=false)
+  - efp_following: A gains B as following
+  - B.followers_count += 1
+
+Step 2: Add "top8" tag
+──────────────────────
+ListOp: 0x 01 03 01 01 <address_B> <"top8">
+Result:
+  - efp_list_record_tags: new row (record → "top8")
+  - efp_followers: tags = ['top8']
+  - B.top8_count += 1
+  - B.followers_count unchanged (still counted)
+
+Step 3: Add "block" tag
+───────────────────────
+ListOp: 0x 01 03 01 01 <address_B> <"block">
+Result:
+  - efp_list_record_tags: new row (record → "block")
+  - efp_followers: is_blocked = TRUE, tags = ['block', 'top8']
+  - B.followers_count -= 1 (now excluded due to block)
+  - B.blocked_by_count += 1
+
+Step 4: Remove "block" tag (unblock)
+────────────────────────────────────
+ListOp: 0x 01 04 01 01 <address_B> <"block">
+Result:
+  - efp_list_record_tags: row deleted
+  - efp_followers: is_blocked = FALSE, tags = ['top8']
+  - B.followers_count += 1 (included again)
+  - B.blocked_by_count -= 1
+
+Step 5: Unfollow User B
+───────────────────────
+ListOp: 0x 01 02 01 01 <address_B>
+Result:
+  - efp_list_records: row deleted
+  - efp_list_record_tags: all tags for this record deleted (cascade)
+  - efp_followers: row deleted
+  - efp_following: row deleted
+  - B.followers_count -= 1
+  - B.top8_count -= 1
+```
+
+### Database Impact Summary
+
+| Operation | efp_list_records | efp_list_record_tags | efp_followers | efp_following |
+|-----------|------------------|----------------------|---------------|---------------|
+| Follow (0x01) | INSERT | - | INSERT | INSERT |
+| Unfollow (0x02) | DELETE | CASCADE DELETE | DELETE | DELETE |
+| Tag (0x03) | - | INSERT | UPDATE tags[] | UPDATE tags[] |
+| Untag (0x04) | - | DELETE | UPDATE tags[] | UPDATE tags[] |
+
+---
+
 ## Database Schema Design
 
 ### Philosophy
@@ -478,64 +729,1420 @@ function getCacheKey(request: Request): string {
 
 ## pg-boss Workers
 
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           WORKERS SERVICE                                    │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                         pg-boss Queue                                │   │
+│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐       │   │
+│  │  │ stats   │ │ mutuals │ │ leader  │ │ ens     │ │ resync  │       │   │
+│  │  │ jobs    │ │ jobs    │ │ jobs    │ │ jobs    │ │ jobs    │       │   │
+│  │  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘       │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                    ┌───────────────┼───────────────┐                       │
+│                    ▼               ▼               ▼                       │
+│           ┌──────────────┐ ┌──────────────┐ ┌──────────────┐              │
+│           │ Worker Pool  │ │ Worker Pool  │ │ Worker Pool  │              │
+│           │ (stats)      │ │ (mutuals)    │ │ (ens)        │              │
+│           │ concurrency:5│ │ concurrency:3│ │ concurrency:2│              │
+│           └──────────────┘ └──────────────┘ └──────────────┘              │
+│                    │               │               │                       │
+│                    ▼               ▼               ▼                       │
+│           ┌──────────────────────────────────────────────┐                │
+│           │              PostgreSQL / Redis / ES          │                │
+│           └──────────────────────────────────────────────┘                │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
 ### Job Types
 
-| Job Name | Trigger | Description |
-|----------|---------|-------------|
-| `update-user-stats` | WAL change on efp_followers/following | Recalculate follower/following counts |
-| `update-leaderboard` | Scheduled (5 min) + on-demand | Recompute rankings |
-| `calculate-mutuals` | WAL change on efp_followers | Update mutual relationships |
-| `sync-ens-metadata` | On new address seen | Fetch ENS name/avatar |
-| `invalidate-cache` | WAL change | Clear Redis keys for affected addresses |
-| `batch-update-stats` | Scheduled (hourly) | Bulk reconciliation |
+| Job Name | Trigger | Concurrency | Description |
+|----------|---------|-------------|-------------|
+| `update-user-stats` | WAL change | 5 | Recalculate counts for a user |
+| `calculate-mutuals` | WAL change | 3 | Update mutual relationship between two users |
+| `update-leaderboard-entry` | Stats change | 2 | Update one user's leaderboard ranking |
+| `update-leaderboard-full` | Scheduled (5 min) | 1 | Full leaderboard recompute |
+| `sync-ens-metadata` | New address / Scheduled | 2 | Fetch ENS name/avatar |
+| `sync-user-to-elasticsearch` | Derived table change | 3 | Update ES user document |
+| `resync-user-relationships` | Primary list change | 1 | Full resync of a user's follows |
+| `resync-list-relationships` | List user change | 1 | Full resync of a list's follows |
+| `ensure-user-stats` | New user | 5 | Create initial stats entry |
+| `batch-reconcile-stats` | Scheduled (hourly) | 1 | Bulk reconciliation |
+| `batch-refresh-ens` | Scheduled (daily) | 1 | Refresh stale ENS data |
 
 ### Worker Configuration
 
 ```typescript
-const queueConfig = {
+// services/workers/src/config.ts
+import PgBoss from 'pg-boss';
+
+export const bossConfig: PgBoss.ConstructorOptions = {
+  connectionString: process.env.DATABASE_URL,
   schema: 'pgboss',
   application_name: 'efp-workers',
-  max: 10,  // max connections
+
+  // Connection pool
+  max: 10,
+
+  // Retry configuration
   retryLimit: 3,
   retryDelay: 60,
   retryBackoff: true,
+
+  // Job lifecycle
   expireInHours: 24,
   archiveCompletedAfterSeconds: 60 * 60 * 24 * 7,  // 7 days
+
+  // Monitoring
+  monitorStateIntervalSeconds: 30,
+
+  // Maintenance
+  deleteAfterSeconds: 60 * 60 * 24 * 14,  // 14 days
+  maintenanceIntervalSeconds: 300,
 };
+
+// Per-job configuration
+export const jobConfigs = {
+  'update-user-stats': {
+    teamSize: 5,
+    teamConcurrency: 5,
+    batchSize: 1,
+  },
+  'calculate-mutuals': {
+    teamSize: 3,
+    teamConcurrency: 3,
+    batchSize: 1,
+  },
+  'update-leaderboard-entry': {
+    teamSize: 2,
+    teamConcurrency: 2,
+    batchSize: 10,  // Process in batches
+  },
+  'update-leaderboard-full': {
+    teamSize: 1,
+    teamConcurrency: 1,
+  },
+  'sync-ens-metadata': {
+    teamSize: 2,
+    teamConcurrency: 2,
+  },
+  'sync-user-to-elasticsearch': {
+    teamSize: 3,
+    teamConcurrency: 3,
+    batchSize: 50,  // Batch ES updates
+  },
+  'resync-user-relationships': {
+    teamSize: 1,
+    teamConcurrency: 1,
+  },
+};
+```
+
+### Worker Entry Point
+
+```typescript
+// services/workers/src/index.ts
+import PgBoss from 'pg-boss';
+import { bossConfig, jobConfigs } from './config';
+import { logger } from '@efp/shared/logger';
+import { waitForMigrationComplete } from '@efp/shared/phase';
+
+// Import job handlers
+import { handleUpdateUserStats } from './jobs/update-user-stats';
+import { handleCalculateMutuals } from './jobs/calculate-mutuals';
+import { handleUpdateLeaderboardEntry } from './jobs/update-leaderboard-entry';
+import { handleUpdateLeaderboardFull } from './jobs/update-leaderboard-full';
+import { handleSyncENSMetadata } from './jobs/sync-ens-metadata';
+import { handleSyncUserToElasticsearch } from './jobs/sync-user-to-elasticsearch';
+import { handleResyncUserRelationships } from './jobs/resync-user-relationships';
+import { handleResyncListRelationships } from './jobs/resync-list-relationships';
+import { handleEnsureUserStats } from './jobs/ensure-user-stats';
+import { handleBatchReconcileStats } from './jobs/batch-reconcile-stats';
+import { handleBatchRefreshENS } from './jobs/batch-refresh-ens';
+
+async function main() {
+  // Wait for system to be ready
+  await waitForMigrationComplete();
+
+  const boss = new PgBoss(bossConfig);
+
+  boss.on('error', (err) => logger.error(err, 'pg-boss error'));
+  boss.on('monitor-states', (states) => logger.info({ states }, 'Queue states'));
+
+  await boss.start();
+  logger.info('pg-boss started');
+
+  // Register job handlers
+  const handlers: [string, PgBoss.WorkHandler<any>][] = [
+    ['update-user-stats', handleUpdateUserStats],
+    ['calculate-mutuals', handleCalculateMutuals],
+    ['update-leaderboard-entry', handleUpdateLeaderboardEntry],
+    ['update-leaderboard-full', handleUpdateLeaderboardFull],
+    ['sync-ens-metadata', handleSyncENSMetadata],
+    ['sync-user-to-elasticsearch', handleSyncUserToElasticsearch],
+    ['resync-user-relationships', handleResyncUserRelationships],
+    ['resync-list-relationships', handleResyncListRelationships],
+    ['ensure-user-stats', handleEnsureUserStats],
+    ['batch-reconcile-stats', handleBatchReconcileStats],
+    ['batch-refresh-ens', handleBatchRefreshENS],
+  ];
+
+  for (const [jobName, handler] of handlers) {
+    const config = jobConfigs[jobName] || {};
+    await boss.work(jobName, config, handler);
+    logger.info({ jobName, config }, 'Registered job handler');
+  }
+
+  // Schedule recurring jobs
+  await boss.schedule('update-leaderboard-full', '*/5 * * * *');  // Every 5 minutes
+  await boss.schedule('batch-reconcile-stats', '0 * * * *');       // Every hour
+  await boss.schedule('batch-refresh-ens', '0 3 * * *');           // Daily at 3 AM
+
+  logger.info('Workers ready');
+
+  // Graceful shutdown
+  process.on('SIGTERM', async () => {
+    logger.info('Shutting down workers...');
+    await boss.stop({ graceful: true, timeout: 30000 });
+    process.exit(0);
+  });
+}
+
+main().catch((err) => {
+  logger.error(err, 'Workers fatal error');
+  process.exit(1);
+});
+```
+
+### Job Handler Implementations
+
+#### update-user-stats
+
+```typescript
+// services/workers/src/jobs/update-user-stats.ts
+import PgBoss from 'pg-boss';
+import { getPool } from '@efp/shared/db';
+import { logger } from '@efp/shared/logger';
+
+interface UpdateUserStatsJob {
+  address: string;
+}
+
+export async function handleUpdateUserStats(
+  job: PgBoss.Job<UpdateUserStatsJob>
+): Promise<void> {
+  const { address } = job.data;
+  const db = getPool();
+
+  logger.debug({ address }, 'Updating user stats');
+
+  // Calculate all stats in a single query
+  const result = await db.query(`
+    WITH stats AS (
+      SELECT
+        COALESCE((
+          SELECT COUNT(*) FROM efp_followers
+          WHERE address = $1 AND is_blocked = FALSE AND is_muted = FALSE
+        ), 0) as followers_count,
+        COALESCE((
+          SELECT COUNT(*) FROM efp_following
+          WHERE address = $1 AND is_blocked = FALSE AND is_muted = FALSE
+        ), 0) as following_count,
+        COALESCE((
+          SELECT COUNT(*) FROM efp_mutuals
+          WHERE address_a = $1 OR address_b = $1
+        ), 0) as mutuals_count,
+        COALESCE((
+          SELECT COUNT(*) FROM efp_following
+          WHERE address = $1 AND is_blocked = TRUE
+        ), 0) as blocks_count,
+        COALESCE((
+          SELECT COUNT(*) FROM efp_followers
+          WHERE address = $1 AND is_blocked = TRUE
+        ), 0) as blocked_by_count,
+        COALESCE((
+          SELECT COUNT(*) FROM efp_following
+          WHERE address = $1 AND is_muted = TRUE
+        ), 0) as mutes_count,
+        COALESCE((
+          SELECT COUNT(*) FROM efp_followers
+          WHERE address = $1 AND is_muted = TRUE
+        ), 0) as muted_by_count,
+        COALESCE((
+          SELECT COUNT(*) FROM efp_followers
+          WHERE address = $1 AND 'top8' = ANY(tags)
+        ), 0) as top8_count
+    )
+    INSERT INTO efp_user_stats (
+      address, followers_count, following_count, mutuals_count,
+      blocks_count, blocked_by_count, mutes_count, muted_by_count, top8_count
+    )
+    SELECT $1, followers_count, following_count, mutuals_count,
+           blocks_count, blocked_by_count, mutes_count, muted_by_count, top8_count
+    FROM stats
+    ON CONFLICT (address) DO UPDATE SET
+      followers_count = EXCLUDED.followers_count,
+      following_count = EXCLUDED.following_count,
+      mutuals_count = EXCLUDED.mutuals_count,
+      blocks_count = EXCLUDED.blocks_count,
+      blocked_by_count = EXCLUDED.blocked_by_count,
+      mutes_count = EXCLUDED.mutes_count,
+      muted_by_count = EXCLUDED.muted_by_count,
+      top8_count = EXCLUDED.top8_count,
+      updated_at = NOW()
+    RETURNING *
+  `, [address]);
+
+  logger.info({ address, stats: result.rows[0] }, 'Updated user stats');
+}
+```
+
+#### calculate-mutuals
+
+```typescript
+// services/workers/src/jobs/calculate-mutuals.ts
+import PgBoss from 'pg-boss';
+import { getPool } from '@efp/shared/db';
+import { logger } from '@efp/shared/logger';
+
+interface CalculateMutualsJob {
+  addressA: string;
+  addressB: string;
+}
+
+export async function handleCalculateMutuals(
+  job: PgBoss.Job<CalculateMutualsJob>
+): Promise<void> {
+  const { addressA, addressB } = job.data;
+  const db = getPool();
+
+  // Normalize order (always store smaller address first)
+  const [addrA, addrB] = [addressA, addressB].sort();
+
+  logger.debug({ addrA, addrB }, 'Calculating mutual status');
+
+  // Check if mutual relationship exists
+  const mutualCheck = await db.query(`
+    SELECT
+      EXISTS (
+        SELECT 1 FROM efp_followers
+        WHERE address = $1 AND follower_address = $2
+          AND is_blocked = FALSE AND is_muted = FALSE
+      ) as a_follows_b,
+      EXISTS (
+        SELECT 1 FROM efp_followers
+        WHERE address = $2 AND follower_address = $1
+          AND is_blocked = FALSE AND is_muted = FALSE
+      ) as b_follows_a
+  `, [addrB, addrA]);
+
+  const { a_follows_b, b_follows_a } = mutualCheck.rows[0];
+  const isMutual = a_follows_b && b_follows_a;
+
+  if (isMutual) {
+    // Upsert mutual relationship
+    await db.query(`
+      INSERT INTO efp_mutuals (address_a, address_b)
+      VALUES ($1, $2)
+      ON CONFLICT (address_a, address_b) DO NOTHING
+    `, [addrA, addrB]);
+    logger.info({ addrA, addrB }, 'Added mutual relationship');
+  } else {
+    // Remove mutual relationship if it exists
+    const deleted = await db.query(`
+      DELETE FROM efp_mutuals
+      WHERE address_a = $1 AND address_b = $2
+      RETURNING *
+    `, [addrA, addrB]);
+
+    if (deleted.rowCount > 0) {
+      logger.info({ addrA, addrB }, 'Removed mutual relationship');
+    }
+  }
+}
+```
+
+#### update-leaderboard-full
+
+```typescript
+// services/workers/src/jobs/update-leaderboard-full.ts
+import PgBoss from 'pg-boss';
+import { getPool } from '@efp/shared/db';
+import { logger } from '@efp/shared/logger';
+
+export async function handleUpdateLeaderboardFull(
+  job: PgBoss.Job<{}>
+): Promise<void> {
+  const db = getPool();
+  const startTime = Date.now();
+
+  logger.info('Starting full leaderboard update');
+
+  // Truncate and repopulate with fresh rankings
+  await db.query(`
+    BEGIN;
+
+    -- Clear existing leaderboard
+    TRUNCATE efp_leaderboard;
+
+    -- Repopulate with fresh rankings
+    INSERT INTO efp_leaderboard (
+      address,
+      followers_count,
+      following_count,
+      mutuals_count,
+      followers_rank,
+      following_rank,
+      mutuals_rank,
+      blocks_rank,
+      top8_rank,
+      updated_at
+    )
+    SELECT
+      address,
+      followers_count,
+      following_count,
+      mutuals_count,
+      RANK() OVER (ORDER BY followers_count DESC) as followers_rank,
+      RANK() OVER (ORDER BY following_count DESC) as following_rank,
+      RANK() OVER (ORDER BY mutuals_count DESC) as mutuals_rank,
+      RANK() OVER (ORDER BY blocks_count DESC) as blocks_rank,
+      RANK() OVER (ORDER BY top8_count DESC) as top8_rank,
+      NOW() as updated_at
+    FROM efp_user_stats
+    WHERE followers_count > 0 OR following_count > 0;
+
+    COMMIT;
+  `);
+
+  const duration = Date.now() - startTime;
+  logger.info({ duration }, 'Completed full leaderboard update');
+}
+```
+
+#### sync-ens-metadata
+
+```typescript
+// services/workers/src/jobs/sync-ens-metadata.ts
+import PgBoss from 'pg-boss';
+import { getPool } from '@efp/shared/db';
+import { logger } from '@efp/shared/logger';
+import { createPublicClient, http } from 'viem';
+import { mainnet } from 'viem/chains';
+import { normalize } from 'viem/ens';
+
+interface SyncENSMetadataJob {
+  address: string;
+  force?: boolean;
+}
+
+const client = createPublicClient({
+  chain: mainnet,
+  transport: http(process.env.PRIMARY_RPC_ETH),
+});
+
+export async function handleSyncENSMetadata(
+  job: PgBoss.Job<SyncENSMetadataJob>
+): Promise<void> {
+  const { address, force } = job.data;
+  const db = getPool();
+
+  // Check if we have recent data (skip if fresh and not forced)
+  if (!force) {
+    const existing = await db.query(`
+      SELECT fresh FROM ens_metadata
+      WHERE address = $1
+        AND fresh > $2
+    `, [address, Date.now() - 24 * 60 * 60 * 1000]);  // 24 hours
+
+    if (existing.rows.length > 0) {
+      logger.debug({ address }, 'ENS metadata is fresh, skipping');
+      return;
+    }
+  }
+
+  logger.debug({ address }, 'Fetching ENS metadata');
+
+  try {
+    // Reverse resolve address to ENS name
+    const name = await client.getEnsName({ address: address as `0x${string}` });
+
+    if (!name) {
+      // No ENS name, store empty record
+      await db.query(`
+        INSERT INTO ens_metadata (address, name, fresh)
+        VALUES ($1, '', $2)
+        ON CONFLICT (address) DO UPDATE SET
+          name = '',
+          fresh = EXCLUDED.fresh,
+          updated_at = NOW()
+      `, [address, Date.now()]);
+      return;
+    }
+
+    // Get avatar and other records
+    const [avatar, records] = await Promise.all([
+      client.getEnsAvatar({ name: normalize(name) }).catch(() => null),
+      client.getEnsText({ name: normalize(name), key: 'description' }).catch(() => null),
+    ]);
+
+    // Store in database
+    await db.query(`
+      INSERT INTO ens_metadata (address, name, avatar, records, fresh)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (address) DO UPDATE SET
+        name = EXCLUDED.name,
+        avatar = EXCLUDED.avatar,
+        records = EXCLUDED.records,
+        fresh = EXCLUDED.fresh,
+        updated_at = NOW()
+    `, [address, name, avatar, records ? JSON.stringify({ description: records }) : null, Date.now()]);
+
+    logger.info({ address, name, avatar: !!avatar }, 'Updated ENS metadata');
+
+  } catch (err) {
+    logger.error({ err, address }, 'Failed to fetch ENS metadata');
+    throw err;  // Will trigger retry
+  }
+}
+```
+
+#### sync-user-to-elasticsearch
+
+```typescript
+// services/workers/src/jobs/sync-user-to-elasticsearch.ts
+import PgBoss from 'pg-boss';
+import { getPool, getElasticsearch } from '@efp/shared/db';
+import { logger } from '@efp/shared/logger';
+
+interface SyncUserToElasticsearchJob {
+  address: string;
+}
+
+export async function handleSyncUserToElasticsearch(
+  job: PgBoss.Job<SyncUserToElasticsearchJob>
+): Promise<void> {
+  const { address } = job.data;
+  const db = getPool();
+  const es = getElasticsearch();
+
+  // Fetch user data from PostgreSQL
+  const result = await db.query(`
+    SELECT
+      us.address,
+      us.primary_list_id,
+      us.followers_count,
+      us.following_count,
+      us.mutuals_count,
+      em.name as ens_name,
+      em.avatar,
+      em.display as ens_display,
+      lb.followers_rank,
+      lb.following_rank,
+      lb.mutuals_rank,
+      lb.blocks_rank,
+      lb.top8_rank
+    FROM efp_user_stats us
+    LEFT JOIN ens_metadata em ON em.address = us.address
+    LEFT JOIN efp_leaderboard lb ON lb.address = us.address
+    WHERE us.address = $1
+  `, [address]);
+
+  if (result.rows.length === 0) {
+    logger.debug({ address }, 'No user stats found, skipping ES sync');
+    return;
+  }
+
+  const user = result.rows[0];
+
+  // Upsert to Elasticsearch
+  await es.update({
+    index: 'efp_users',
+    id: address,
+    doc: {
+      address: user.address,
+      ens_name: user.ens_name || null,
+      ens_name_keyword: user.ens_name || null,
+      avatar: user.avatar || null,
+      primary_list_id: user.primary_list_id,
+      followers_count: user.followers_count,
+      following_count: user.following_count,
+      mutuals_count: user.mutuals_count,
+      followers_rank: user.followers_rank,
+      following_rank: user.following_rank,
+      mutuals_rank: user.mutuals_rank,
+      blocks_rank: user.blocks_rank,
+      top8_rank: user.top8_rank,
+      has_primary_list: user.primary_list_id !== null,
+      updated_at: new Date().toISOString(),
+    },
+    upsert: {
+      address: user.address,
+      ens_name: user.ens_name || null,
+      ens_name_keyword: user.ens_name || null,
+      avatar: user.avatar || null,
+      primary_list_id: user.primary_list_id,
+      followers_count: user.followers_count,
+      following_count: user.following_count,
+      mutuals_count: user.mutuals_count,
+      followers_rank: user.followers_rank,
+      following_rank: user.following_rank,
+      mutuals_rank: user.mutuals_rank,
+      blocks_rank: user.blocks_rank,
+      top8_rank: user.top8_rank,
+      has_primary_list: user.primary_list_id !== null,
+      updated_at: new Date().toISOString(),
+    },
+  });
+
+  logger.debug({ address }, 'Synced user to Elasticsearch');
+}
+```
+
+#### resync-user-relationships
+
+```typescript
+// services/workers/src/jobs/resync-user-relationships.ts
+import PgBoss from 'pg-boss';
+import { getPool } from '@efp/shared/db';
+import { logger } from '@efp/shared/logger';
+
+interface ResyncUserRelationshipsJob {
+  address: string;
+  newPrimaryList: number | null;
+}
+
+export async function handleResyncUserRelationships(
+  job: PgBoss.Job<ResyncUserRelationshipsJob>
+): Promise<void> {
+  const { address, newPrimaryList } = job.data;
+  const db = getPool();
+
+  logger.info({ address, newPrimaryList }, 'Resyncing user relationships');
+
+  await db.query('BEGIN');
+
+  try {
+    // Remove all existing follower relationships where this user is the follower
+    await db.query(`
+      DELETE FROM efp_followers
+      WHERE follower_address = $1
+    `, [address]);
+
+    // Remove all existing following relationships for this user
+    await db.query(`
+      DELETE FROM efp_following
+      WHERE address = $1
+    `, [address]);
+
+    // Remove all mutuals involving this user
+    await db.query(`
+      DELETE FROM efp_mutuals
+      WHERE address_a = $1 OR address_b = $1
+    `, [address]);
+
+    // If they have a new primary list, repopulate relationships
+    if (newPrimaryList !== null) {
+      // Get the list's storage location
+      const listResult = await db.query(`
+        SELECT
+          list_storage_location_chain_id as chain_id,
+          list_storage_location_contract_address as contract_address,
+          list_storage_location_slot as slot
+        FROM efp_lists
+        WHERE token_id = $1 AND "user" = $2
+      `, [newPrimaryList, address]);
+
+      if (listResult.rows.length > 0) {
+        const { chain_id, contract_address, slot } = listResult.rows[0];
+
+        // Repopulate efp_followers and efp_following from list records
+        await db.query(`
+          INSERT INTO efp_followers (address, follower_address, follower_list_id, is_blocked, is_muted, tags)
+          SELECT
+            '0x' || encode(r.record_data, 'hex'),
+            $4,
+            $1,
+            EXISTS (SELECT 1 FROM efp_list_record_tags t WHERE t.chain_id = r.chain_id AND t.contract_address = r.contract_address AND t.slot = r.slot AND t.record = r.record AND t.tag = 'block'),
+            EXISTS (SELECT 1 FROM efp_list_record_tags t WHERE t.chain_id = r.chain_id AND t.contract_address = r.contract_address AND t.slot = r.slot AND t.record = r.record AND t.tag = 'mute'),
+            COALESCE((SELECT array_agg(DISTINCT t.tag ORDER BY t.tag) FROM efp_list_record_tags t WHERE t.chain_id = r.chain_id AND t.contract_address = r.contract_address AND t.slot = r.slot AND t.record = r.record), '{}')
+          FROM efp_list_records r
+          WHERE r.chain_id = $2
+            AND r.contract_address = $3
+            AND r.slot = $5
+            AND r.record_type = 1
+          ON CONFLICT (address, follower_address) DO UPDATE SET
+            follower_list_id = EXCLUDED.follower_list_id,
+            is_blocked = EXCLUDED.is_blocked,
+            is_muted = EXCLUDED.is_muted,
+            tags = EXCLUDED.tags,
+            updated_at = NOW()
+        `, [newPrimaryList, chain_id, contract_address, address, slot]);
+
+        // Similarly for efp_following
+        await db.query(`
+          INSERT INTO efp_following (address, list_id, following_address, is_blocked, is_muted, tags)
+          SELECT
+            $4,
+            $1,
+            '0x' || encode(r.record_data, 'hex'),
+            EXISTS (SELECT 1 FROM efp_list_record_tags t WHERE t.chain_id = r.chain_id AND t.contract_address = r.contract_address AND t.slot = r.slot AND t.record = r.record AND t.tag = 'block'),
+            EXISTS (SELECT 1 FROM efp_list_record_tags t WHERE t.chain_id = r.chain_id AND t.contract_address = r.contract_address AND t.slot = r.slot AND t.record = r.record AND t.tag = 'mute'),
+            COALESCE((SELECT array_agg(DISTINCT t.tag ORDER BY t.tag) FROM efp_list_record_tags t WHERE t.chain_id = r.chain_id AND t.contract_address = r.contract_address AND t.slot = r.slot AND t.record = r.record), '{}')
+          FROM efp_list_records r
+          WHERE r.chain_id = $2
+            AND r.contract_address = $3
+            AND r.slot = $5
+            AND r.record_type = 1
+          ON CONFLICT (address, following_address) DO UPDATE SET
+            list_id = EXCLUDED.list_id,
+            is_blocked = EXCLUDED.is_blocked,
+            is_muted = EXCLUDED.is_muted,
+            tags = EXCLUDED.tags,
+            updated_at = NOW()
+        `, [newPrimaryList, chain_id, contract_address, address, slot]);
+      }
+    }
+
+    await db.query('COMMIT');
+
+    // Queue stats update and mutuals recalculation
+    // This will be handled by the WAL-listener when it sees the changes
+
+    logger.info({ address, newPrimaryList }, 'Completed user relationship resync');
+
+  } catch (err) {
+    await db.query('ROLLBACK');
+    throw err;
+  }
+}
+```
+
+#### batch-reconcile-stats
+
+```typescript
+// services/workers/src/jobs/batch-reconcile-stats.ts
+import PgBoss from 'pg-boss';
+import { getPool } from '@efp/shared/db';
+import { logger } from '@efp/shared/logger';
+
+export async function handleBatchReconcileStats(
+  job: PgBoss.Job<{}>
+): Promise<void> {
+  const db = getPool();
+  const startTime = Date.now();
+
+  logger.info('Starting batch stats reconciliation');
+
+  // Find users with potentially stale stats
+  // (updated_at older than 1 hour but have recent follower/following changes)
+  const staleUsers = await db.query(`
+    SELECT DISTINCT us.address
+    FROM efp_user_stats us
+    WHERE us.updated_at < NOW() - INTERVAL '1 hour'
+      AND (
+        EXISTS (
+          SELECT 1 FROM efp_followers f
+          WHERE f.address = us.address
+            AND f.updated_at > us.updated_at
+        )
+        OR EXISTS (
+          SELECT 1 FROM efp_following f
+          WHERE f.address = us.address
+            AND f.updated_at > us.updated_at
+        )
+      )
+    LIMIT 1000
+  `);
+
+  logger.info({ count: staleUsers.rows.length }, 'Found stale user stats');
+
+  // Update stats in batches
+  for (const row of staleUsers.rows) {
+    await db.query(`
+      UPDATE efp_user_stats us
+      SET
+        followers_count = COALESCE((SELECT COUNT(*) FROM efp_followers WHERE address = us.address AND is_blocked = FALSE AND is_muted = FALSE), 0),
+        following_count = COALESCE((SELECT COUNT(*) FROM efp_following WHERE address = us.address AND is_blocked = FALSE AND is_muted = FALSE), 0),
+        mutuals_count = COALESCE((SELECT COUNT(*) FROM efp_mutuals WHERE address_a = us.address OR address_b = us.address), 0),
+        updated_at = NOW()
+      WHERE us.address = $1
+    `, [row.address]);
+  }
+
+  const duration = Date.now() - startTime;
+  logger.info({ duration, reconciled: staleUsers.rows.length }, 'Completed batch stats reconciliation');
+}
+```
+
+#### batch-refresh-ens
+
+```typescript
+// services/workers/src/jobs/batch-refresh-ens.ts
+import PgBoss from 'pg-boss';
+import { getPool } from '@efp/shared/db';
+import { logger } from '@efp/shared/logger';
+
+export async function handleBatchRefreshENS(
+  job: PgBoss.Job<{}>
+): Promise<void> {
+  const db = getPool();
+  const boss = job.boss as PgBoss;
+
+  logger.info('Starting batch ENS refresh');
+
+  // Find addresses with stale ENS data (older than 7 days)
+  const staleAddresses = await db.query(`
+    SELECT address
+    FROM ens_metadata
+    WHERE fresh < $1
+      OR fresh IS NULL
+    ORDER BY fresh ASC NULLS FIRST
+    LIMIT 500
+  `, [Date.now() - 7 * 24 * 60 * 60 * 1000]);
+
+  logger.info({ count: staleAddresses.rows.length }, 'Found stale ENS records');
+
+  // Queue individual refresh jobs
+  for (const row of staleAddresses.rows) {
+    await boss.send('sync-ens-metadata', {
+      address: row.address,
+      force: true,
+    });
+  }
+
+  logger.info('Queued ENS refresh jobs');
+}
+```
+
+### Job Monitoring
+
+```typescript
+// services/workers/src/monitoring.ts
+import PgBoss from 'pg-boss';
+import { logger } from '@efp/shared/logger';
+
+export function setupMonitoring(boss: PgBoss) {
+  // Log queue states periodically
+  boss.on('monitor-states', (states) => {
+    const summary = {
+      created: states.queues.created || 0,
+      retry: states.queues.retry || 0,
+      active: states.queues.active || 0,
+      completed: states.queues.completed || 0,
+      failed: states.queues.failed || 0,
+    };
+
+    logger.info({ queueStates: summary }, 'Queue status');
+
+    // Alert if too many failed jobs
+    if (summary.failed > 100) {
+      logger.warn({ failed: summary.failed }, 'High number of failed jobs');
+    }
+
+    // Alert if queue is backing up
+    if (summary.created > 1000) {
+      logger.warn({ created: summary.created }, 'Queue backlog growing');
+    }
+  });
+
+  // Log individual job failures
+  boss.on('failed', (job) => {
+    logger.error({
+      jobId: job.id,
+      jobName: job.name,
+      data: job.data,
+      error: job.output,
+    }, 'Job failed');
+  });
+}
 ```
 
 ---
 
 ## WAL-Listener Design
 
-### Tables to Monitor
+The WAL-listener is responsible for:
+1. Detecting changes to core tables and updating derived tables
+2. Syncing derived data to Elasticsearch
+3. Invalidating Redis cache entries
+4. Queuing pg-boss jobs for expensive computations
 
-| Table | Sync Target | Action |
-|-------|-------------|--------|
-| `efp_followers` | Elasticsearch + Redis | Update user index, invalidate cache |
-| `efp_following` | Elasticsearch + Redis | Update user index, invalidate cache |
-| `efp_user_stats` | Elasticsearch | Update counts/ranks |
-| `efp_leaderboard` | Elasticsearch | Update rankings |
-| `ens_metadata` | Elasticsearch | Update names/avatars |
-
-### CDC Flow
+### Architecture
 
 ```
-PostgreSQL WAL
-    │
-    ▼
-┌─────────────────────┐
-│   WAL-Listener      │
-│   (LISTEN/NOTIFY)   │
-└─────────────────────┘
-    │
-    ├──► Elasticsearch Sync (async)
-    │    - Upsert user document
-    │    - Update rankings
-    │
-    └──► Redis Cache Invalidation
-         - DEL efp:/users/{address}/*
-         - Publish pg-boss job for expensive recalcs
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           WAL-LISTENER SERVICE                               │
+│                                                                             │
+│  ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐       │
+│  │  LISTEN/NOTIFY  │────▶│  Event Router   │────▶│  Action Queue   │       │
+│  │  Subscriber     │     │                 │     │  (in-memory)    │       │
+│  └─────────────────┘     └─────────────────┘     └─────────────────┘       │
+│                                                           │                 │
+│                          ┌────────────────────────────────┼─────────────┐   │
+│                          ▼                                ▼             ▼   │
+│                 ┌─────────────────┐          ┌─────────────────┐  ┌──────┐ │
+│                 │  Derived Table  │          │  Elasticsearch  │  │Redis │ │
+│                 │  Updater        │          │  Sync           │  │Inval │ │
+│                 └─────────────────┘          └─────────────────┘  └──────┘ │
+│                          │                                                  │
+│                          ▼                                                  │
+│                 ┌─────────────────┐                                        │
+│                 │  pg-boss Job    │                                        │
+│                 │  Publisher      │                                        │
+│                 └─────────────────┘                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Tables to Monitor
+
+| Table | Change Type | Actions |
+|-------|-------------|---------|
+| `efp_list_records` | INSERT/DELETE | Update derived tables, queue stats job |
+| `efp_list_record_tags` | INSERT/DELETE | Update derived tables, queue stats job |
+| `efp_lists` | INSERT/UPDATE | Update derived tables if user/manager changed |
+| `efp_account_metadata` | INSERT/UPDATE | Update primary list, queue stats job |
+| `efp_followers` | INSERT/UPDATE/DELETE | Sync to ES, invalidate cache |
+| `efp_following` | INSERT/UPDATE/DELETE | Sync to ES, invalidate cache |
+| `efp_user_stats` | UPDATE | Sync to ES, invalidate cache |
+| `ens_metadata` | INSERT/UPDATE | Sync to ES |
+
+### Event Handler Implementation
+
+```typescript
+// services/wal-listener/src/index.ts
+import { Client } from 'pg';
+import { getPool, getRedis, getElasticsearch } from '@efp/shared';
+import { publishJob } from './jobs';
+import { logger } from '@efp/shared/logger';
+
+interface WALEvent {
+  table: string;
+  operation: 'INSERT' | 'UPDATE' | 'DELETE';
+  data: Record<string, any>;
+}
+
+async function main() {
+  // Wait for migration complete
+  await waitForMigrationComplete();
+
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+
+  // Subscribe to notification channel
+  await client.query('LISTEN efp_changes');
+
+  logger.info('WAL-Listener active, listening for changes...');
+
+  client.on('notification', async (msg) => {
+    if (msg.channel !== 'efp_changes' || !msg.payload) return;
+
+    try {
+      const event: WALEvent = JSON.parse(msg.payload);
+      await handleEvent(event);
+    } catch (err) {
+      logger.error({ err, payload: msg.payload }, 'Failed to handle WAL event');
+    }
+  });
+
+  // Graceful shutdown
+  process.on('SIGTERM', async () => {
+    logger.info('Shutting down WAL-listener...');
+    await client.end();
+    process.exit(0);
+  });
+}
+
+async function handleEvent(event: WALEvent) {
+  const handler = eventHandlers[event.table];
+  if (handler) {
+    await handler(event.operation, event.data);
+  }
+}
+
+const eventHandlers: Record<string, (op: string, data: any) => Promise<void>> = {
+  'efp_list_records': handleListRecordsChange,
+  'efp_list_record_tags': handleListRecordTagsChange,
+  'efp_lists': handleListsChange,
+  'efp_account_metadata': handleAccountMetadataChange,
+  'efp_followers': handleFollowersChange,
+  'efp_following': handleFollowingChange,
+  'efp_user_stats': handleUserStatsChange,
+  'ens_metadata': handleENSMetadataChange,
+};
+```
+
+### Core Table Handlers (Trigger Derived Updates)
+
+```typescript
+// services/wal-listener/src/handlers/core-tables.ts
+
+/**
+ * Handle changes to efp_list_records
+ * When a record is added/removed, update efp_followers and efp_following
+ */
+async function handleListRecordsChange(
+  operation: string,
+  data: {
+    chain_id: number;
+    contract_address: string;
+    slot: Buffer;
+    record: Buffer;
+    record_type: number;
+    record_data: Buffer;
+  }
+) {
+  // Only handle address records (type 1)
+  if (data.record_type !== 1) return;
+
+  const db = getPool();
+  const followedAddress = '0x' + data.record_data.toString('hex');
+
+  // Find the list this record belongs to
+  const listResult = await db.query(`
+    SELECT l.token_id, l."user", am.value as primary_list_value
+    FROM efp_lists l
+    LEFT JOIN efp_account_metadata am ON
+      am.address = l."user"
+      AND am."key" = 'primary-list'
+    WHERE l.list_storage_location_chain_id = $1
+      AND l.list_storage_location_contract_address = $2
+      AND l.list_storage_location_slot = $3
+  `, [data.chain_id, data.contract_address, data.slot]);
+
+  if (listResult.rows.length === 0) return;
+
+  const list = listResult.rows[0];
+  const followerAddress = list.user;
+
+  // Check if this is the user's primary list
+  const primaryListId = list.primary_list_value
+    ? convertHexToBigInt(list.primary_list_value)
+    : null;
+  const isPrimaryList = primaryListId === list.token_id;
+
+  if (!isPrimaryList) {
+    logger.debug({ list: list.token_id }, 'Skipping non-primary list record');
+    return;
+  }
+
+  // Get tags for this record
+  const tagsResult = await db.query(`
+    SELECT array_agg(tag ORDER BY tag) as tags
+    FROM efp_list_record_tags
+    WHERE chain_id = $1
+      AND contract_address = $2
+      AND slot = $3
+      AND record = $4
+  `, [data.chain_id, data.contract_address, data.slot, data.record]);
+
+  const tags = tagsResult.rows[0]?.tags || [];
+  const isBlocked = tags.includes('block');
+  const isMuted = tags.includes('mute');
+
+  if (operation === 'INSERT') {
+    // Add to efp_followers (address being followed)
+    await db.query(`
+      INSERT INTO efp_followers (address, follower_address, follower_list_id, is_blocked, is_muted, tags)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (address, follower_address) DO UPDATE SET
+        follower_list_id = EXCLUDED.follower_list_id,
+        is_blocked = EXCLUDED.is_blocked,
+        is_muted = EXCLUDED.is_muted,
+        tags = EXCLUDED.tags,
+        updated_at = NOW()
+    `, [followedAddress, followerAddress, list.token_id, isBlocked, isMuted, tags]);
+
+    // Add to efp_following (the follower's perspective)
+    await db.query(`
+      INSERT INTO efp_following (address, list_id, following_address, is_blocked, is_muted, tags)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (address, following_address) DO UPDATE SET
+        list_id = EXCLUDED.list_id,
+        is_blocked = EXCLUDED.is_blocked,
+        is_muted = EXCLUDED.is_muted,
+        tags = EXCLUDED.tags,
+        updated_at = NOW()
+    `, [followerAddress, list.token_id, followedAddress, isBlocked, isMuted, tags]);
+
+  } else if (operation === 'DELETE') {
+    // Remove from derived tables
+    await db.query(`
+      DELETE FROM efp_followers
+      WHERE address = $1 AND follower_address = $2
+    `, [followedAddress, followerAddress]);
+
+    await db.query(`
+      DELETE FROM efp_following
+      WHERE address = $1 AND following_address = $2
+    `, [followerAddress, followedAddress]);
+  }
+
+  // Queue stats update jobs for both addresses
+  await publishJob('update-user-stats', { address: followedAddress });
+  await publishJob('update-user-stats', { address: followerAddress });
+
+  // Queue mutuals recalculation
+  await publishJob('calculate-mutuals', {
+    addressA: followerAddress,
+    addressB: followedAddress,
+  });
+
+  logger.info({
+    operation,
+    follower: followerAddress,
+    followed: followedAddress,
+  }, 'Processed list record change');
+}
+
+/**
+ * Handle changes to efp_list_record_tags
+ * When a tag is added/removed, update the derived tables
+ */
+async function handleListRecordTagsChange(
+  operation: string,
+  data: {
+    chain_id: number;
+    contract_address: string;
+    slot: Buffer;
+    record: Buffer;
+    tag: string;
+  }
+) {
+  const db = getPool();
+
+  // Get record details
+  const recordResult = await db.query(`
+    SELECT record_data, record_type
+    FROM efp_list_records
+    WHERE chain_id = $1
+      AND contract_address = $2
+      AND slot = $3
+      AND record = $4
+  `, [data.chain_id, data.contract_address, data.slot, data.record]);
+
+  if (recordResult.rows.length === 0 || recordResult.rows[0].record_type !== 1) {
+    return;
+  }
+
+  const followedAddress = '0x' + recordResult.rows[0].record_data.toString('hex');
+
+  // Find the list and follower
+  const listResult = await db.query(`
+    SELECT l."user" as follower_address
+    FROM efp_lists l
+    INNER JOIN efp_account_metadata am ON
+      am.address = l."user"
+      AND am."key" = 'primary-list'
+      AND convert_hex_to_bigint(am.value::text) = l.token_id
+    WHERE l.list_storage_location_chain_id = $1
+      AND l.list_storage_location_contract_address = $2
+      AND l.list_storage_location_slot = $3
+  `, [data.chain_id, data.contract_address, data.slot]);
+
+  if (listResult.rows.length === 0) return;
+
+  const followerAddress = listResult.rows[0].follower_address;
+
+  // Get updated tags list
+  const tagsResult = await db.query(`
+    SELECT array_agg(tag ORDER BY tag) as tags
+    FROM efp_list_record_tags
+    WHERE chain_id = $1
+      AND contract_address = $2
+      AND slot = $3
+      AND record = $4
+  `, [data.chain_id, data.contract_address, data.slot, data.record]);
+
+  const tags = tagsResult.rows[0]?.tags || [];
+  const isBlocked = tags.includes('block');
+  const isMuted = tags.includes('mute');
+
+  // Update derived tables with new tag state
+  await db.query(`
+    UPDATE efp_followers
+    SET is_blocked = $3, is_muted = $4, tags = $5, updated_at = NOW()
+    WHERE address = $1 AND follower_address = $2
+  `, [followedAddress, followerAddress, isBlocked, isMuted, tags]);
+
+  await db.query(`
+    UPDATE efp_following
+    SET is_blocked = $3, is_muted = $4, tags = $5, updated_at = NOW()
+    WHERE address = $1 AND following_address = $2
+  `, [followerAddress, followedAddress, isBlocked, isMuted, tags]);
+
+  // Queue stats update (block/mute affects counts)
+  await publishJob('update-user-stats', { address: followedAddress });
+  await publishJob('update-user-stats', { address: followerAddress });
+
+  // Recalculate mutuals if block/mute changed
+  if (data.tag === 'block' || data.tag === 'mute') {
+    await publishJob('calculate-mutuals', {
+      addressA: followerAddress,
+      addressB: followedAddress,
+    });
+  }
+
+  logger.info({
+    operation,
+    tag: data.tag,
+    follower: followerAddress,
+    followed: followedAddress,
+  }, 'Processed tag change');
+}
+
+/**
+ * Handle changes to efp_account_metadata
+ * Primary list changes require full resync of follower relationships
+ */
+async function handleAccountMetadataChange(
+  operation: string,
+  data: {
+    address: string;
+    key: string;
+    value: string;
+  }
+) {
+  // Only care about primary-list changes
+  if (data.key !== 'primary-list') return;
+
+  const db = getPool();
+
+  // Queue a full resync job for this user
+  await publishJob('resync-user-relationships', {
+    address: data.address,
+    newPrimaryList: data.value ? convertHexToBigInt(data.value) : null,
+  });
+
+  logger.info({
+    address: data.address,
+    operation,
+  }, 'Primary list changed, queued resync');
+}
+
+/**
+ * Handle changes to efp_lists
+ * User/manager assignment changes may affect relationships
+ */
+async function handleListsChange(
+  operation: string,
+  data: {
+    token_id: number;
+    user: string;
+    manager: string;
+  }
+) {
+  if (operation === 'INSERT') {
+    // New list created, ensure user has stats entry
+    await publishJob('ensure-user-stats', { address: data.user });
+  } else if (operation === 'UPDATE') {
+    // User assignment changed, may need to resync
+    await publishJob('resync-list-relationships', { tokenId: data.token_id });
+  }
+}
+```
+
+### Derived Table Handlers (Sync to ES + Cache Invalidation)
+
+```typescript
+// services/wal-listener/src/handlers/derived-tables.ts
+
+/**
+ * Handle changes to efp_followers
+ * Sync to Elasticsearch and invalidate Redis cache
+ */
+async function handleFollowersChange(
+  operation: string,
+  data: {
+    address: string;
+    follower_address: string;
+    is_blocked: boolean;
+    is_muted: boolean;
+  }
+) {
+  const redis = getRedis();
+
+  // Invalidate cache for both addresses
+  const patterns = [
+    `efp:/users/${data.address}/*`,
+    `efp:/users/${data.follower_address}/*`,
+    `efp:/lists/*`,  // Could be more targeted with list_id
+  ];
+
+  for (const pattern of patterns) {
+    const keys = await redis.keys(pattern);
+    if (keys.length > 0) {
+      await redis.del(...keys);
+      logger.debug({ pattern, count: keys.length }, 'Invalidated cache keys');
+    }
+  }
+
+  // Queue ES sync for affected addresses
+  await publishJob('sync-user-to-elasticsearch', { address: data.address });
+  await publishJob('sync-user-to-elasticsearch', { address: data.follower_address });
+}
+
+/**
+ * Handle changes to efp_following
+ * Similar to followers but from the opposite perspective
+ */
+async function handleFollowingChange(
+  operation: string,
+  data: {
+    address: string;
+    following_address: string;
+  }
+) {
+  const redis = getRedis();
+
+  // Invalidate cache
+  const patterns = [
+    `efp:/users/${data.address}/*`,
+    `efp:/users/${data.following_address}/*`,
+  ];
+
+  for (const pattern of patterns) {
+    const keys = await redis.keys(pattern);
+    if (keys.length > 0) {
+      await redis.del(...keys);
+    }
+  }
+}
+
+/**
+ * Handle changes to efp_user_stats
+ * Sync updated stats to Elasticsearch
+ */
+async function handleUserStatsChange(
+  operation: string,
+  data: {
+    address: string;
+    followers_count: number;
+    following_count: number;
+    mutuals_count: number;
+  }
+) {
+  const redis = getRedis();
+  const es = getElasticsearch();
+
+  // Invalidate cache
+  await redis.del(`efp:/users/${data.address}/stats`);
+  await redis.del(`efp:/users/${data.address}/details`);
+
+  // Update Elasticsearch
+  await es.update({
+    index: 'efp_users',
+    id: data.address,
+    doc: {
+      followers_count: data.followers_count,
+      following_count: data.following_count,
+      mutuals_count: data.mutuals_count,
+      updated_at: new Date().toISOString(),
+    },
+    upsert: {
+      address: data.address,
+      followers_count: data.followers_count,
+      following_count: data.following_count,
+      mutuals_count: data.mutuals_count,
+      updated_at: new Date().toISOString(),
+    },
+  });
+
+  // Queue leaderboard update if counts changed significantly
+  await publishJob('update-leaderboard-entry', { address: data.address });
+}
+
+/**
+ * Handle changes to ens_metadata
+ * Update user's ENS info in Elasticsearch
+ */
+async function handleENSMetadataChange(
+  operation: string,
+  data: {
+    address: string;
+    name: string;
+    avatar: string;
+    display: string;
+  }
+) {
+  const redis = getRedis();
+  const es = getElasticsearch();
+
+  // Invalidate cache
+  await redis.del(`efp:/users/${data.address}/account`);
+  await redis.del(`efp:/users/${data.address}/details`);
+  await redis.del(`efp:/users/${data.address}/ens`);
+
+  // Update Elasticsearch
+  await es.update({
+    index: 'efp_users',
+    id: data.address,
+    doc: {
+      ens_name: data.name,
+      ens_display: data.display,
+      avatar: data.avatar,
+      updated_at: new Date().toISOString(),
+    },
+    upsert: {
+      address: data.address,
+      ens_name: data.name,
+      ens_display: data.display,
+      avatar: data.avatar,
+      updated_at: new Date().toISOString(),
+    },
+  });
+}
+```
+
+### Job Publisher
+
+```typescript
+// services/wal-listener/src/jobs.ts
+import PgBoss from 'pg-boss';
+
+let boss: PgBoss;
+
+export async function initJobQueue() {
+  boss = new PgBoss(process.env.DATABASE_URL!);
+  await boss.start();
+}
+
+export async function publishJob(
+  jobName: string,
+  data: Record<string, any>,
+  options?: { priority?: number; singletonKey?: string }
+) {
+  const jobOptions: PgBoss.SendOptions = {};
+
+  if (options?.priority) {
+    jobOptions.priority = options.priority;
+  }
+
+  // Use singleton to dedupe rapid-fire updates for same entity
+  if (options?.singletonKey) {
+    jobOptions.singletonKey = options.singletonKey;
+    jobOptions.singletonSeconds = 5;  // Dedupe within 5 seconds
+  }
+
+  await boss.send(jobName, data, jobOptions);
+}
+
+// Convenience methods with deduplication
+export const publishUserStatsJob = (address: string) =>
+  publishJob('update-user-stats', { address }, { singletonKey: `stats:${address}` });
+
+export const publishMutualsJob = (addressA: string, addressB: string) => {
+  const key = [addressA, addressB].sort().join(':');
+  return publishJob('calculate-mutuals', { addressA, addressB }, { singletonKey: `mutuals:${key}` });
+};
+
+export const publishESUserSync = (address: string) =>
+  publishJob('sync-user-to-elasticsearch', { address }, { singletonKey: `es:${address}` });
+```
 ```
 
 ---
@@ -1425,6 +3032,346 @@ WHERE us.followers_count > 0 OR us.following_count > 0;
 
 ---
 
+## API Response Shapes (Backwards Compatibility)
+
+### Production API Reference
+
+**Production URL:** `https://api.ethfollow.xyz/api/v1`
+**Documentation:** https://ethidentitykit.com/docs/api
+
+### Development Pattern: Verify Before Implement
+
+Before implementing any endpoint, always verify the response shape against production:
+
+```typescript
+// Pattern: Fetch from production, examine response, then implement
+async function verifyEndpoint(endpoint: string, params?: Record<string, string>) {
+  const url = new URL(`https://api.ethfollow.xyz/api/v1${endpoint}`);
+  if (params) {
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+  }
+
+  const response = await fetch(url.toString());
+  const data = await response.json();
+
+  console.log('Status:', response.status);
+  console.log('Headers:', Object.fromEntries(response.headers.entries()));
+  console.log('Body:', JSON.stringify(data, null, 2));
+
+  return data;
+}
+
+// Example: Before implementing /users/:address/details
+await verifyEndpoint('/users/0xd8da6bf26964af9d7eed9e03e53415d37aa96045/details');
+```
+
+### Complete Endpoint Parity Checklist
+
+All endpoints must match production exactly. Check each off as verified and implemented.
+
+#### Users Endpoints (`/users/:addressOrENS/*`)
+
+| # | Endpoint | Priority | Status |
+|---|----------|----------|--------|
+| 1 | `GET /users/:addressOrENS/account` | P0 - Critical | ⬜ |
+| 2 | `GET /users/:addressOrENS/details` | P0 - Critical | ⬜ |
+| 3 | `GET /users/:addressOrENS/stats` | P0 - Critical | ⬜ |
+| 4 | `GET /users/:addressOrENS/followers` | P1 - Core | ⬜ |
+| 5 | `GET /users/:addressOrENS/following` | P1 - Core | ⬜ |
+| 6 | `GET /users/:addressOrENS/allFollowers` | P1 - Core | ⬜ |
+| 7 | `GET /users/:addressOrENS/allFollowing` | P1 - Core | ⬜ |
+| 8 | `GET /users/:addressOrENS/commonFollowers` | P2 - Extended | ⬜ |
+| 9 | `GET /users/:addressOrENS/ens` | P2 - Extended | ⬜ |
+| 10 | `GET /users/:addressOrENS/followerState` | P2 - Extended | ⬜ |
+| 11 | `GET /users/:addressOrENS/latestFollowers` | P2 - Extended | ⬜ |
+| 12 | `GET /users/:addressOrENS/list-records` | P2 - Extended | ⬜ |
+| 13 | `GET /users/:addressOrENS/lists` | P2 - Extended | ⬜ |
+| 14 | `GET /users/:addressOrENS/notifications` | P3 - Advanced | ⬜ |
+| 15 | `GET /users/:addressOrENS/poap` | P3 - Advanced | ⬜ |
+| 16 | `GET /users/:addressOrENS/primary-list` | P2 - Extended | ⬜ |
+| 17 | `GET /users/:addressOrENS/qr` | P3 - Advanced | ⬜ |
+| 18 | `GET /users/:addressOrENS/recommended` | P3 - Advanced | ⬜ |
+| 19 | `GET /users/:addressOrENS/relationships` | P2 - Extended | ⬜ |
+| 20 | `GET /users/:addressOrENS/searchFollowers` | P2 - Extended | ⬜ |
+| 21 | `GET /users/:addressOrENS/searchFollowing` | P2 - Extended | ⬜ |
+| 22 | `GET /users/:addressOrENS/taggedAs` | P2 - Extended | ⬜ |
+| 23 | `GET /users/:addressOrENS/tags` | P2 - Extended | ⬜ |
+
+#### Lists Endpoints (`/lists/:token_id/*`)
+
+| # | Endpoint | Priority | Status |
+|---|----------|----------|--------|
+| 24 | `GET /lists/:token_id/account` | P1 - Core | ⬜ |
+| 25 | `GET /lists/:token_id/details` | P1 - Core | ⬜ |
+| 26 | `GET /lists/:token_id/stats` | P1 - Core | ⬜ |
+| 27 | `GET /lists/:token_id/followers` | P1 - Core | ⬜ |
+| 28 | `GET /lists/:token_id/following` | P1 - Core | ⬜ |
+| 29 | `GET /lists/:token_id/allFollowers` | P1 - Core | ⬜ |
+| 30 | `GET /lists/:token_id/allFollowing` | P1 - Core | ⬜ |
+| 31 | `GET /lists/:token_id/allFollowingAddresses` | P2 - Extended | ⬜ |
+| 32 | `GET /lists/:token_id/buttonState` | P2 - Extended | ⬜ |
+| 33 | `GET /lists/:token_id/followerState` | P2 - Extended | ⬜ |
+| 34 | `GET /lists/:token_id/latestFollowers` | P2 - Extended | ⬜ |
+| 35 | `GET /lists/:token_id/poap` | P3 - Advanced | ⬜ |
+| 36 | `GET /lists/:token_id/records` | P2 - Extended | ⬜ |
+| 37 | `GET /lists/:token_id/recommended` | P3 - Advanced | ⬜ |
+| 38 | `GET /lists/:token_id/searchFollowers` | P2 - Extended | ⬜ |
+| 39 | `GET /lists/:token_id/searchFollowing` | P2 - Extended | ⬜ |
+| 40 | `GET /lists/:token_id/taggedAs` | P2 - Extended | ⬜ |
+| 41 | `GET /lists/:token_id/tags` | P2 - Extended | ⬜ |
+
+#### Leaderboard Endpoints (`/leaderboard/*`)
+
+| # | Endpoint | Priority | Status |
+|---|----------|----------|--------|
+| 42 | `GET /leaderboard/ranked` | P1 - Core | ⬜ |
+| 43 | `GET /leaderboard/followers` | P1 - Core | ⬜ |
+| 44 | `GET /leaderboard/following` | P1 - Core | ⬜ |
+| 45 | `GET /leaderboard/blocks` | P2 - Extended | ⬜ |
+| 46 | `GET /leaderboard/blocked` | P2 - Extended | ⬜ |
+| 47 | `GET /leaderboard/mutes` | P2 - Extended | ⬜ |
+| 48 | `GET /leaderboard/muted` | P2 - Extended | ⬜ |
+| 49 | `GET /leaderboard/all` | P2 - Extended | ⬜ |
+| 50 | `GET /leaderboard/count` | P2 - Extended | ⬜ |
+| 51 | `GET /leaderboard/search` | P2 - Extended | ⬜ |
+
+#### Global Endpoints
+
+| # | Endpoint | Priority | Status |
+|---|----------|----------|--------|
+| 52 | `GET /stats` | P1 - Core | ⬜ |
+| 53 | `GET /discover` | P2 - Extended | ⬜ |
+| 54 | `GET /minters` | P3 - Advanced | ⬜ |
+| 55 | `GET /exportState` | P3 - Advanced | ⬜ |
+| 56 | `GET /serviceHealth` | P0 - Critical | ⬜ |
+
+#### Token Endpoints (`/token/*`)
+
+| # | Endpoint | Priority | Status |
+|---|----------|----------|--------|
+| 57 | `GET /token/metadata` | P3 - Advanced | ⬜ |
+| 58 | `GET /token/image` | P3 - Advanced | ⬜ |
+
+#### Slots Endpoints (`/slots/*`)
+
+| # | Endpoint | Priority | Status |
+|---|----------|----------|--------|
+| 59 | `GET /slots/:slot/details` | P3 - Advanced | ⬜ |
+
+#### Debug Endpoints (`/debug/*`)
+
+| # | Endpoint | Priority | Status |
+|---|----------|----------|--------|
+| 60 | `GET /debug/num-events` | P3 - Advanced | ⬜ |
+| 61 | `GET /debug/num-list-ops` | P3 - Advanced | ⬜ |
+| 62 | `GET /debug/total-supply` | P3 - Advanced | ⬜ |
+
+**Total: 62 endpoints**
+
+### Priority Definitions
+
+- **P0 - Critical**: Endpoints causing production crashes, must implement first
+- **P1 - Core**: Essential functionality used by most integrations
+- **P2 - Extended**: Full feature parity for complete compatibility
+- **P3 - Advanced**: Specialized features, implement last
+
+### Core Types
+
+```typescript
+// Base address type
+type Address = `0x${string}`;
+
+// ENS Profile (returned when include=ens)
+interface ENSProfile {
+  name: string | null;
+  address: Address;
+  avatar: string | null;
+  updated_at?: string;
+  records?: string;
+  contenthash?: string;
+}
+
+// ENS Profile in batch responses
+interface ENSProfileResponse {
+  name: string | null;
+  address: Address;
+  avatar: string | null;
+  type?: 'error' | 'success';
+}
+```
+
+### Critical Endpoint Response Shapes (P0)
+
+#### GET /users/:address/account
+
+```typescript
+// Response
+{
+  address: Address;
+  ens?: ENSProfile;
+}
+
+// Example
+{
+  "address": "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+  "ens": {
+    "name": "vitalik.eth",
+    "address": "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+    "avatar": "https://euc.li/vitalik.eth",
+    "updated_at": "2024-04-03T12:00:00Z"
+  }
+}
+```
+
+#### GET /users/:address/details
+
+```typescript
+// Response
+{
+  address: Address;
+  ens?: ENSProfile;
+  ranks: {
+    mutuals_rank: number;
+    followers_rank: number;
+    following_rank: number;
+    top8_rank: number;
+    blocks_rank: number;
+  };
+  primary_list: string | null;  // Token ID as string, or null
+}
+```
+
+#### GET /users/:address/stats
+
+```typescript
+// Response
+{
+  followers_count: number;
+  following_count: number;
+}
+```
+
+### Core Endpoint Response Shapes (P1)
+
+#### GET /users/:address/followers
+
+**Query params:** `limit`, `offset`, `sort` (latest|followers|earliest), `tags`, `include` (ens|mutuals|blocked|muted)
+
+```typescript
+// Response
+{
+  followers: Array<{
+    address: Address;
+    tags: string[];
+    is_following: boolean;
+    is_blocked: boolean;
+    is_muted: boolean;
+    ens?: ENSProfileResponse;  // Only if include=ens
+  }>;
+}
+```
+
+#### GET /users/:address/following
+
+**Query params:** `limit`, `offset`, `sort` (latest|followers|earliest), `tags`, `include` (ens|mutuals|blocked|muted)
+
+```typescript
+// Response
+{
+  following: Array<{
+    version: number;
+    record_type: 'address' | string;
+    data: Address;
+    address: Address;
+    tags: string[];
+    ens?: ENSProfileResponse;
+  }>;
+}
+```
+
+#### GET /leaderboard/ranked
+
+**Query params:** `limit` (default 50), `offset`, `sort` (mutuals|followers|following|blocks|top8), `direction` (DESC|ASC)
+
+```typescript
+// Response
+{
+  last_updated: string;
+  results: Array<{
+    address: Address;
+    name: string | undefined;
+    avatar: string | undefined;
+    header: string | undefined;
+    mutuals_rank: number;
+    followers_rank: number;
+    following_rank: number;
+    blocks_rank: number;
+    top8_rank: number;
+    mutuals: number;
+    following: number;
+    followers: number;
+    blocks: number;
+    top8: number;
+    updated_at: string;
+  }>;
+}
+```
+
+#### GET /leaderboard/followers (and similar)
+
+```typescript
+// Response: Direct array (no wrapper object)
+Array<{
+  rank: number;
+  address: Address;
+  followers_count: number;  // or following_count, blocks_count, etc.
+}>
+```
+
+### Error Responses
+
+```typescript
+// 400 Bad Request
+{
+  response: string;  // e.g., "ENS name not valid or does not exist"
+  error?: string;
+}
+
+// 404 Not Found
+{
+  response: "No User Found";
+}
+
+// 503 Service Unavailable (during sync, if SERVE_DURING_SYNC=false)
+{
+  error: "Service initializing";
+  phase: "historical" | "migrating";
+  message: "System is syncing blockchain data. Please retry shortly.";
+}
+```
+
+### Response Headers
+
+| Header | Description |
+|--------|-------------|
+| `X-Cache` | `HIT` or `MISS` - indicates cache status |
+| `X-EFP-Phase` | Current system phase (when `SERVE_DURING_SYNC=true`) |
+| `X-Response-Time` | Request processing time |
+
+### Query Parameter Standards
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | number | 10 (50 for ranked) | Max items to return |
+| `offset` | number | 0 | Items to skip |
+| `sort` | string | 'latest' | Sort order |
+| `direction` | string | 'DESC' | Sort direction |
+| `tags` | string | - | Comma-separated tag filter |
+| `include` | string | - | Additional data (ens, mutuals, blocked, muted) |
+| `cache` | string | - | Set to 'fresh' to bypass cache |
+
+---
+
 ## Testing Strategy
 
 ### Philosophy
@@ -1786,3 +3733,203 @@ jobs:
 ## Timeline
 
 TBD based on resource availability and priority discussions.
+
+---
+
+## Appendix: Project Summary & Resources
+
+### Objective
+
+Rewrite the EFP (Ethereum Follow Protocol) backend to handle significantly increased traffic that is currently causing production crashes. The solution adopts proven patterns from the Grails ENS marketplace backend, which has demonstrated reliability under high load.
+
+### Core Problem
+
+The existing EFP API runs on Cloudflare Workers (serverless), which creates and destroys database connections rapidly. Under burst traffic to `/users/:address/account` and `/users/:address/details` endpoints, the PostgreSQL connection pool becomes exhausted, causing `08P01` protocol violation errors and cascading failures.
+
+### Solution Architecture
+
+Replace the serverless architecture with a traditional service-based architecture:
+
+| Component | Current | New |
+|-----------|---------|-----|
+| **API** | Cloudflare Workers (Hono) | Fastify with connection pooling |
+| **Cache Invalidation** | cache-register (polling, sequential) | WAL-listener (CDC, real-time) |
+| **Background Jobs** | Interval-based services | pg-boss (PostgreSQL job queue) |
+| **Search/Leaderboard** | PostgreSQL stored procedures | Elasticsearch |
+| **Database** | PostgreSQL (query-heavy) | PostgreSQL (CDC-friendly) + derived tables |
+
+### Key Design Decisions
+
+1. **ENS Resolution**: Background sync - pre-resolve all addresses, refresh periodically
+2. **Rate Limiting**: IP-based only (no API keys for now)
+3. **API Version**: Keep `/api/v1` with identical response shapes for backwards compatibility
+4. **Indexer Changes**: Minimal - only add `indexer_caught_up` flag, WAL-listener handles derived data
+5. **Phase Management**: Automatic via orchestrator service (historical → migrating → listening)
+6. **Data Population**: Fresh indexer run, no manual backfill required
+
+### Protocol Understanding
+
+**EFP (Ethereum Follow Protocol)** is an on-chain social graph for Ethereum:
+
+- **3 Smart Contracts**:
+  - `ListRegistry` (Base): ERC721 NFTs representing follow lists
+  - `ListRecords` (Base, Optimism, Mainnet): Stores follow/block/mute operations
+  - `AccountMetadata` (Base): Stores primary list designation
+
+- **Operations** (opcodes 1-4): Follow, Unfollow, Tag, Untag
+- **Record Format**: `0x01 01 <20-byte-address>` (version, type, data)
+- **Primary List**: A follow only "counts" if it's from the user's designated primary list
+- **Tags**: block, mute, top8, and custom tags modify follow semantics
+
+### Services Overview
+
+| Service | Responsibility |
+|---------|----------------|
+| **Indexer** | Blockchain event indexing → core tables. Sets `indexer_caught_up` flag when synced. |
+| **Orchestrator** | Phase management, derived table migration, system health monitoring. |
+| **WAL-Listener** | PostgreSQL CDC → Elasticsearch sync + Redis cache invalidation + pg-boss job queuing. |
+| **Workers** | Background job processing: stats updates, leaderboard, ENS sync, mutuals calculation. |
+| **API** | HTTP endpoints with Redis caching, rate limiting, connection pooling. |
+
+### Database Architecture
+
+**Core Tables** (populated by indexer):
+- `events` - Raw blockchain events
+- `efp_lists` - NFT ownership and storage locations
+- `efp_list_records` - Follow/block/mute records
+- `efp_list_record_tags` - Tags on records
+- `efp_account_metadata` - Primary list designation
+
+**Derived Tables** (populated by migration + WAL-listener):
+- `efp_followers` - Denormalized follower relationships
+- `efp_following` - Denormalized following relationships
+- `efp_user_stats` - Pre-computed counts per user
+- `efp_leaderboard` - Pre-computed rankings
+- `efp_mutuals` - Mutual follow relationships
+
+### API Compatibility
+
+- **62 endpoints** must match production exactly
+- **P0 Critical**: `/users/:address/account`, `/users/:address/details`, `/users/:address/stats`
+- **Response shapes**: All field names use snake_case, ENS data optional via `include=ens`
+- **Testing**: Compare against production API before implementing each endpoint
+
+### Resources & References
+
+#### External Documentation
+
+| Resource | URL |
+|----------|-----|
+| EFP Documentation | https://docs.efp.app/ |
+| EFP State Interpretation | https://docs.efp.app/production/interpreting-state/ |
+| API Documentation | https://ethidentitykit.com/docs/api |
+| Production API | https://api.ethfollow.xyz/api/v1 |
+
+#### EFP Repositories (ethereumfollowprotocol)
+
+| Repository | GitHub URL | Description |
+|------------|------------|-------------|
+| Indexer | https://github.com/ethereumfollowprotocol/indexer | Blockchain event indexer (Bun + PostgreSQL) |
+| API | https://github.com/ethereumfollowprotocol/api | Current API (Cloudflare Workers + Hono) |
+| Contracts | https://github.com/ethereumfollowprotocol/contracts | Smart contracts (Solidity) |
+| Cache Register | https://github.com/ethereumfollowprotocol/cache-register | Cache invalidation service |
+
+#### Grails Repositories (grailsmarket)
+
+| Repository | GitHub URL | Description |
+|------------|------------|-------------|
+| Backend | https://github.com/grailsmarket/backend | Reference architecture (Fastify, pg-boss, WAL-listener) |
+
+#### New Repository (this project)
+
+| Repository | GitHub URL | Description |
+|------------|------------|-------------|
+| API V2 | https://github.com/ethereumfollowprotocol/api-v2 | New API implementation |
+
+### Key Patterns from Grails
+
+1. **Connection Pooling**: Singleton pattern with `getPostgresPool()`
+2. **WAL-based CDC**: PostgreSQL LISTEN/NOTIFY for real-time change detection
+3. **pg-boss**: PostgreSQL-native job queue (no external message broker)
+4. **Per-route Cache TTL**: Different TTLs for different endpoint volatility
+5. **Transactional Workers**: BEGIN/ROLLBACK for multi-step operations
+6. **Idempotency**: Singleton keys prevent duplicate job processing
+7. **Graceful Shutdown**: SIGTERM handlers in every service
+8. **Zod Validation**: Schema validation for all inputs and configs
+
+### File Structure
+
+```
+services/
+├── api/                    # Fastify REST API
+│   ├── src/
+│   │   ├── index.ts        # Server entry point
+│   │   ├── routes/         # Route handlers (62 endpoints)
+│   │   ├── middleware/     # Cache, rate-limit, phase-check
+│   │   └── services/       # Business logic
+│   └── tests/
+│       ├── comparison/     # Compare against production
+│       ├── integration/    # Full stack tests
+│       └── load/           # k6 stress tests
+│
+├── indexer/                # Existing (minimal changes)
+│
+├── orchestrator/           # Phase management + migration
+│   ├── src/
+│   │   ├── index.ts
+│   │   └── migrations/     # SQL scripts (001-008)
+│   └── package.json
+│
+├── wal-listener/           # PostgreSQL CDC
+│   ├── src/
+│   │   ├── index.ts
+│   │   ├── handlers/       # Table-specific handlers
+│   │   └── jobs.ts         # pg-boss publisher
+│   └── package.json
+│
+├── workers/                # pg-boss job handlers
+│   ├── src/
+│   │   ├── index.ts
+│   │   └── jobs/           # 11 job handlers
+│   └── package.json
+│
+└── shared/                 # Shared utilities
+    ├── src/
+    │   ├── config/         # Environment + validation
+    │   ├── db/             # PostgreSQL + Redis + ES clients
+    │   ├── types/          # Zod schemas + TypeScript types
+    │   └── phase.ts        # Phase management utilities
+    └── package.json
+```
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `REDIS_URL` | Yes | Redis connection string |
+| `ELASTICSEARCH_URL` | Yes | Elasticsearch connection string |
+| `CHAIN_ID` | Yes | Primary chain (8453 for Base) |
+| `PRIMARY_RPC_BASE` | Yes | Base RPC endpoint |
+| `PRIMARY_RPC_OP` | Yes | Optimism RPC endpoint |
+| `PRIMARY_RPC_ETH` | Yes | Ethereum RPC endpoint |
+| `SERVE_DURING_SYNC` | No | Allow API requests during sync (default: false) |
+| `LOG_LEVEL` | No | Logging verbosity (default: info) |
+| `API_PORT` | No | API server port (default: 3000) |
+| `RATE_LIMIT_MAX` | No | Max requests per window per IP (default: 100) |
+| `RATE_LIMIT_WINDOW` | No | Rate limit window in ms (default: 60000) |
+
+### Success Criteria
+
+- [ ] P99 latency < 200ms for hot endpoints
+- [ ] Error rate < 0.1%
+- [ ] Cache hit rate > 80%
+- [ ] Zero connection pool exhaustion errors
+- [ ] Leaderboard freshness < 5 minutes
+- [ ] 100% API parity with production (62 endpoints)
+- [ ] All comparison tests passing
+- [ ] Load tests passing at 200 concurrent users
+
+---
+
+*This document serves as the living specification for the EFP V2 backend rewrite. It will be updated as implementation progresses and decisions are refined.*
