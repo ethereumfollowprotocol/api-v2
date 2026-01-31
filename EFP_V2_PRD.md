@@ -361,6 +361,230 @@ Result:
 
 ---
 
+## List Storage Locations
+
+A **List Storage Location (LSL)** defines where the list records and metadata are stored for an EFP List. This concept is crucial because it decouples NFT ownership from data storage, enabling multi-chain deployments.
+
+### Why Storage Locations Exist
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          THE PROBLEM                                         │
+│                                                                             │
+│  EFP List NFTs are minted on Base (cheap, fast)                            │
+│  But users might want to store their list data on:                          │
+│    - Base (cheap, fast)                                                     │
+│    - Optimism (cheap, different ecosystem)                                  │
+│    - Ethereum Mainnet (maximum security/decentralization)                   │
+│                                                                             │
+│  How do we connect an NFT on Base to data stored on Ethereum?              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          THE SOLUTION                                        │
+│                                                                             │
+│  List Storage Location = Pointer from NFT to where data lives              │
+│                                                                             │
+│  ┌──────────────────┐         ┌──────────────────────────────────┐         │
+│  │  ListRegistry    │         │  ListRecords Contract            │         │
+│  │  (Base)          │         │  (Base, Optimism, OR Mainnet)    │         │
+│  │                  │         │                                  │         │
+│  │  Token ID: 1234  │────────▶│  Chain: 1 (Mainnet)             │         │
+│  │  Owner: 0xABC... │  LSL    │  Contract: 0xListRecords...     │         │
+│  │  LSL: 0x01...    │         │  Slot: 0x0000...1234            │         │
+│  └──────────────────┘         └──────────────────────────────────┘         │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Storage Location Encoding
+
+The List Storage Location is a byte array totaling **86 bytes** (`1 + 1 + 32 + 20 + 32`):
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              LIST STORAGE LOCATION (86 bytes = 1 + 1 + 32 + 20 + 32)        │
+├─────────┬─────────┬─────────────────┬──────────────────┬───────────────────┤
+│ Byte 0  │ Byte 1  │ Bytes 2-33      │ Bytes 34-53      │ Bytes 54-85       │
+├─────────┼─────────┼─────────────────┼──────────────────┼───────────────────┤
+│ version │ loc_type│ chain_id        │ contract_address │ slot              │
+│ (1 byte)│ (1 byte)│ (32 bytes)      │ (20 bytes)       │ (32 bytes)        │
+│  0x01   │  0x01   │ left-padded     │ EVM address      │ left-padded       │
+└─────────┴─────────┴─────────────────┴──────────────────┴───────────────────┘
+```
+
+**Fields:**
+
+| Field | Offset | Size | Description |
+|-------|--------|------|-------------|
+| `version` | 0 | 1 byte | Schema version, currently `0x01` |
+| `location_type` | 1 | 1 byte | Storage type, currently `0x01` (L1 EVM contract) |
+| `chain_id` | 2 | 32 bytes | EVM chain identifier (uint256, left-padded with zeros) |
+| `contract_address` | 34 | 20 bytes | Address of ListRecords contract |
+| `slot` | 54 | 32 bytes | Storage slot within the contract (uint256, left-padded) |
+
+**Validation (from EFPListMinter contract):**
+```solidity
+function decodeL1ListStorageLocation(bytes calldata listStorageLocation)
+    internal pure returns (uint256, address)
+{
+    // the list storage location is
+    // - version (1 byte)
+    // - list storage location type (1 byte)
+    // - chain id (32 bytes)
+    // - contract address (20 bytes)
+    // - slot (32 bytes)
+    require(listStorageLocation.length == 1 + 1 + 32 + 20 + 32,
+        'EFPListMinter: invalid list storage location');
+    require(listStorageLocation[0] == 0x01,
+        'EFPListMinter: invalid list storage location version');
+    require(listStorageLocation[1] == 0x01,
+        'EFPListMinter: invalid list storage location type');
+
+    address contractAddress = _bytesToAddress(listStorageLocation, 34);
+    uint256 slot = _bytesToUint(listStorageLocation, 54);
+    return (slot, contractAddress);
+}
+```
+
+### Encoding Example
+
+**Scenario**: Token ID 1234 storing list data on Ethereum Mainnet at ListRecords contract `0x8aF34B52cfC36BC9C8967904E1349Fd58e3f6f80`
+
+```
+Byte Layout:
+┌────────────────────────────────────────────────────────────────────────────┐
+│ Offset │ Field            │ Value (hex)                                    │
+├────────┼──────────────────┼────────────────────────────────────────────────┤
+│ 0      │ version          │ 01                                             │
+│ 1      │ location_type    │ 01                                             │
+│ 2-33   │ chain_id         │ 0000000000000000000000000000000000000000000000 │
+│        │ (32 bytes)       │ 000000000000000000000001                       │
+│        │                  │ (= 1, Ethereum Mainnet)                        │
+│ 34-53  │ contract_address │ 8aF34B52cfC36BC9C8967904E1349Fd58e3f6f80       │
+│        │ (20 bytes)       │                                                │
+│ 54-85  │ slot             │ 0000000000000000000000000000000000000000000000 │
+│        │ (32 bytes)       │ 0000000000000000000004d2                       │
+│        │                  │ (= 1234 in decimal)                            │
+└────────┴──────────────────┴────────────────────────────────────────────────┘
+
+Full 86-byte value (concatenated, no 0x prefix):
+0101
+0000000000000000000000000000000000000000000000000000000000000001
+8aF34B52cfC36BC9C8967904E1349Fd58e3f6f80
+00000000000000000000000000000000000000000000000000000000000004d2
+```
+
+### Supported Chains
+
+| Chain | Chain ID (decimal) | chain_id field (32 bytes hex) |
+|-------|-------------------|-------------------------------|
+| Ethereum Mainnet | 1 | `0x...0001` |
+| Optimism | 10 | `0x...000a` |
+| Base | 8453 | `0x...2105` |
+
+### How It Connects Everything
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         DATA FLOW                                            │
+│                                                                             │
+│  1. User mints NFT on ListRegistry (Base)                                   │
+│     └─► Token ID: 1234                                                      │
+│     └─► Sets List Storage Location: chain=8453, contract=0xABC, slot=1234   │
+│                                                                             │
+│  2. User performs follow operation on ListRecords (Base)                    │
+│     └─► Contract: 0xABC (same as in LSL)                                    │
+│     └─► Slot: 1234 (same as in LSL)                                         │
+│     └─► ListOp: follow 0xVitalik...                                         │
+│                                                                             │
+│  3. Indexer processes events:                                               │
+│     └─► Sees ListOp on chain 8453, contract 0xABC, slot 1234               │
+│     └─► Looks up: which NFT has LSL pointing to (8453, 0xABC, 1234)?       │
+│     └─► Finds: Token ID 1234, owned by user 0xUser...                       │
+│     └─► Checks: Is 1234 the user's primary list?                            │
+│     └─► If yes: This is a valid follow, update derived tables              │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Storage Location in the Database
+
+The `efp_lists` table stores the decoded storage location components:
+
+```sql
+CREATE TABLE efp_lists (
+    -- NFT identification (where the NFT lives)
+    nft_chain_id                            BIGINT,      -- Always Base (8453)
+    nft_contract_address                    VARCHAR(42), -- ListRegistry address
+    token_id                                BIGINT,      -- NFT token ID
+
+    -- Ownership
+    owner                                   VARCHAR(42),
+    manager                                 VARCHAR(42),
+    "user"                                  VARCHAR(42),
+
+    -- List Storage Location (where the data lives)
+    list_storage_location                   BYTEA,       -- Raw encoded LSL (86 bytes)
+    list_storage_location_chain_id          BIGINT,      -- Decoded from bytes 2-33
+    list_storage_location_contract_address  VARCHAR(42), -- Decoded from bytes 34-53
+    list_storage_location_slot              BYTEA,       -- Decoded from bytes 54-85 (32 bytes)
+
+    PRIMARY KEY (nft_chain_id, nft_contract_address, token_id)
+);
+```
+
+### Joining Records to Lists
+
+To find all records for a list, join on the storage location components:
+
+```sql
+-- Find all follows for token ID 1234
+SELECT
+    '0x' || encode(r.record_data, 'hex') as followed_address
+FROM efp_list_records r
+INNER JOIN efp_lists l ON
+    l.list_storage_location_chain_id = r.chain_id
+    AND l.list_storage_location_contract_address = r.contract_address
+    AND l.list_storage_location_slot = r.slot
+WHERE l.token_id = 1234
+  AND r.record_type = 1;  -- Address records only
+```
+
+### Multi-Chain Indexing
+
+Because lists can store data on different chains, the indexer runs multiple instances:
+
+```
+┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+│ Indexer (Base)   │  │ Indexer (OP)     │  │ Indexer (ETH)    │
+│ Chain ID: 8453   │  │ Chain ID: 10     │  │ Chain ID: 1      │
+│                  │  │                  │  │                  │
+│ Watches:         │  │ Watches:         │  │ Watches:         │
+│ - ListRegistry   │  │ - ListRecords    │  │ - ListRecords    │
+│ - ListRecords    │  │   only           │  │   only           │
+│ - AccountMeta    │  │                  │  │                  │
+└──────────────────┘  └──────────────────┘  └──────────────────┘
+         │                    │                    │
+         └────────────────────┼────────────────────┘
+                              ▼
+                    ┌──────────────────┐
+                    │   PostgreSQL     │
+                    │   (shared DB)    │
+                    └──────────────────┘
+```
+
+### Changing Storage Location
+
+The NFT owner can change the storage location at any time by calling `setListStorageLocation()` on the ListRegistry. This emits an `UpdateListStorageLocation` event that the indexer processes.
+
+**When storage location changes:**
+1. Old records at the old location are no longer associated with this list
+2. Any records at the new location become associated with this list
+3. The WAL-listener queues a `resync-user-relationships` job to rebuild derived tables
+
+---
+
 ## Database Schema Design
 
 ### Philosophy
