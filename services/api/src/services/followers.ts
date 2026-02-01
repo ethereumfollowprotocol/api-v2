@@ -367,12 +367,13 @@ export async function getRelationship(
   };
 }
 
-// Get follower state for a specific address on a list
-export async function getFollowerState(
+// Get list's following state for a specific address (buttonState)
+// Checks: Is the LIST following this ADDRESS?
+export async function getListFollowingState(
   listTokenId: string,
   targetAddress: Address
 ): Promise<{ follow: boolean; block: boolean; mute: boolean }> {
-  // Get list info first
+  // Get list storage location
   const listResult = await query<{
     list_storage_location_chain_id: number;
     list_storage_location_contract_address: string;
@@ -392,7 +393,7 @@ export async function getFollowerState(
   const { list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot } =
     listResult.rows[0];
 
-  // Check if address is in list records
+  // Check if address is in list records (is the list following this address?)
   const recordResult = await query<{
     record_data: string;
     tags: string[] | null;
@@ -427,6 +428,69 @@ export async function getFollowerState(
     mute: isMuted,
   };
 }
+
+// Get follower state for a specific address on a list (followerState)
+// Checks: Is this ADDRESS following the LIST's user?
+export async function getListFollowerState(
+  listTokenId: string,
+  targetAddress: Address
+): Promise<{ follow: boolean; block: boolean; mute: boolean }> {
+  // Get the list's user address
+  const listResult = await query<{
+    user_address: string;
+  }>(
+    `
+    SELECT COALESCE(l."user", l.owner) as user_address
+    FROM efp_lists l
+    WHERE l.token_id = $1
+    `,
+    [listTokenId]
+  );
+
+  if (listResult.rows.length === 0) {
+    return { follow: false, block: false, mute: false };
+  }
+
+  const listUserAddress = listResult.rows[0].user_address.toLowerCase();
+
+  // Check if the target address is following the list's user
+  // We need to check the target address's primary list to see if it contains the list's user
+  const followResult = await query<{
+    is_following: boolean;
+    is_blocked: boolean;
+    is_muted: boolean;
+  }>(
+    `
+    SELECT
+      EXISTS (
+        SELECT 1 FROM efp_following
+        WHERE address = $1 AND following_address = $2
+          AND is_blocked = FALSE AND is_muted = FALSE
+      ) as is_following,
+      EXISTS (
+        SELECT 1 FROM efp_following
+        WHERE address = $1 AND following_address = $2
+          AND is_blocked = TRUE
+      ) as is_blocked,
+      EXISTS (
+        SELECT 1 FROM efp_following
+        WHERE address = $1 AND following_address = $2
+          AND is_muted = TRUE
+      ) as is_muted
+    `,
+    [targetAddress, listUserAddress]
+  );
+
+  const row = followResult.rows[0];
+  return {
+    follow: row?.is_following ?? false,
+    block: row?.is_blocked ?? false,
+    mute: row?.is_muted ?? false,
+  };
+}
+
+// Legacy alias - use getListFollowerState instead
+export const getFollowerState = getListFollowerState;
 
 // Search followers by address or ENS name
 export async function searchFollowers(

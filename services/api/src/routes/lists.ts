@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { query, convertHexToBigInt, toStringOrNull, type Address, createLogger } from '@efp/shared';
 import { getENSProfile } from '../services/ens.js';
-import { getFollowers, getFollowing, getFollowerState, searchFollowers, searchFollowing } from '../services/followers.js';
+import { getFollowers, getFollowing, getListFollowerState, getListFollowingState, searchFollowers, searchFollowing } from '../services/followers.js';
 import { getListTags, getListTaggedAs } from '../services/tags.js';
 import { getRecommendations, getRecommendationsWithDetails } from '../services/recommendations.js';
 import { getPOAPBadges } from '../services/poap.js';
@@ -222,6 +222,7 @@ export async function listsRoutes(app: FastifyInstance) {
   );
 
   // GET /lists/:tokenId/allFollowers (P1)
+  // Returns all followers, but respects limit/offset if provided
   app.get<{ Params: TokenParams; Querystring: PaginationQuery }>(
     '/lists/:tokenId/allFollowers',
     async (request, reply) => {
@@ -233,11 +234,14 @@ export async function listsRoutes(app: FastifyInstance) {
       }
 
       const address = list.user || list.owner;
-      const { sort = 'latest', tags, include } = request.query;
+      const { limit, offset = '0', sort = 'latest', tags, include } = request.query;
+
+      // If limit is provided, use it; otherwise return all (up to 10000)
+      const effectiveLimit = limit ? Math.min(parseInt(limit, 10) || 10000, 10000) : 10000;
 
       const followers = await getFollowers(address, {
-        limit: 10000,
-        offset: 0,
+        limit: effectiveLimit,
+        offset: parseInt(offset, 10) || 0,
         sort: sort as 'latest' | 'followers' | 'earliest',
         tags: tags?.split(',').filter(Boolean),
         includeENS: include?.includes('ens'),
@@ -248,6 +252,7 @@ export async function listsRoutes(app: FastifyInstance) {
   );
 
   // GET /lists/:tokenId/allFollowing (P1)
+  // Returns all following, but respects limit/offset if provided
   app.get<{ Params: TokenParams; Querystring: PaginationQuery }>(
     '/lists/:tokenId/allFollowing',
     async (request, reply) => {
@@ -259,11 +264,14 @@ export async function listsRoutes(app: FastifyInstance) {
       }
 
       const address = list.user || list.owner;
-      const { sort = 'latest', tags, include } = request.query;
+      const { limit, offset = '0', sort = 'latest', tags, include } = request.query;
+
+      // If limit is provided, use it; otherwise return all (up to 10000)
+      const effectiveLimit = limit ? Math.min(parseInt(limit, 10) || 10000, 10000) : 10000;
 
       const following = await getFollowing(address, {
-        limit: 10000,
-        offset: 0,
+        limit: effectiveLimit,
+        offset: parseInt(offset, 10) || 0,
         sort: sort as 'latest' | 'followers' | 'earliest',
         tags: tags?.split(',').filter(Boolean),
         includeENS: include?.includes('ens'),
@@ -590,6 +598,7 @@ export async function listsRoutes(app: FastifyInstance) {
   );
 
   // GET /lists/:tokenId/:addressOrENS/followerState (P2)
+  // Checks: Is the ADDRESS following the LIST's user?
   app.get<{ Params: TokenParams & { addressOrENS: string } }>(
     '/lists/:tokenId/:addressOrENS/followerState',
     async (request, reply) => {
@@ -606,7 +615,35 @@ export async function listsRoutes(app: FastifyInstance) {
         return reply.status(400).send({ response: 'ENS name not valid or does not exist' });
       }
 
-      const state = await getFollowerState(tokenId, targetAddress);
+      const state = await getListFollowerState(tokenId, targetAddress);
+
+      return {
+        token_id: tokenId,
+        address: targetAddress,
+        state,
+      };
+    }
+  );
+
+  // GET /lists/:tokenId/:addressOrENS/buttonState (P2)
+  // Checks: Is the LIST following this ADDRESS? (for follow button UI state)
+  app.get<{ Params: TokenParams & { addressOrENS: string } }>(
+    '/lists/:tokenId/:addressOrENS/buttonState',
+    async (request, reply) => {
+      const { tokenId, addressOrENS } = request.params;
+      const list = await getListInfo(tokenId);
+
+      if (!list) {
+        return reply.status(404).send({ response: 'List not found' });
+      }
+
+      // Resolve address
+      const targetAddress = await resolveAddressOrENS(addressOrENS);
+      if (!targetAddress) {
+        return reply.status(400).send({ response: 'ENS name not valid or does not exist' });
+      }
+
+      const state = await getListFollowingState(tokenId, targetAddress);
 
       return {
         token_id: tokenId,

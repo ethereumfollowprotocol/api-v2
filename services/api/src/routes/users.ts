@@ -134,15 +134,21 @@ export async function usersRoutes(app: FastifyInstance) {
   );
 
   // GET /users/:addressOrENS/allFollowers (P1)
+  // Returns all followers, but respects limit/offset if provided
   app.get<{ Params: AddressParams; Querystring: PaginationQuery }>(
     '/users/:addressOrENS/allFollowers',
     async (request, reply) => {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      const { sort = 'latest', tags, include } = request.query;
+      const { limit, offset = '0', sort = 'latest', tags, include } = request.query;
 
-      const followers = await getAllFollowers(address, {
+      // If limit is provided, use it; otherwise return all (up to 10000)
+      const effectiveLimit = limit ? Math.min(parseInt(limit, 10) || 10000, 10000) : 10000;
+
+      const followers = await getFollowers(address, {
+        limit: effectiveLimit,
+        offset: parseInt(offset, 10) || 0,
         sort: sort as 'latest' | 'followers' | 'earliest',
         tags: tags?.split(',').filter(Boolean),
         includeENS: include?.includes('ens'),
@@ -153,15 +159,21 @@ export async function usersRoutes(app: FastifyInstance) {
   );
 
   // GET /users/:addressOrENS/allFollowing (P1)
+  // Returns all following, but respects limit/offset if provided
   app.get<{ Params: AddressParams; Querystring: PaginationQuery }>(
     '/users/:addressOrENS/allFollowing',
     async (request, reply) => {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      const { sort = 'latest', tags, include } = request.query;
+      const { limit, offset = '0', sort = 'latest', tags, include } = request.query;
 
-      const following = await getAllFollowing(address, {
+      // If limit is provided, use it; otherwise return all (up to 10000)
+      const effectiveLimit = limit ? Math.min(parseInt(limit, 10) || 10000, 10000) : 10000;
+
+      const following = await getFollowing(address, {
+        limit: effectiveLimit,
+        offset: parseInt(offset, 10) || 0,
         sort: sort as 'latest' | 'followers' | 'earliest',
         tags: tags?.split(',').filter(Boolean),
         includeENS: include?.includes('ens'),
@@ -240,11 +252,11 @@ export async function usersRoutes(app: FastifyInstance) {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      const { limit = '10', include } = request.query;
+      const { limit = '10', offset = '0', include } = request.query;
 
       const followers = await getFollowers(address, {
         limit: Math.min(parseInt(limit, 10) || 10, 100),
-        offset: 0,
+        offset: parseInt(offset, 10) || 0,
         sort: 'latest',
         includeENS: include?.includes('ens'),
       });

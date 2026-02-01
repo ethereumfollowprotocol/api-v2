@@ -36,11 +36,12 @@ export async function statsRoutes(app: FastifyInstance) {
 
   // GET /discover (P2)
   // Response shape: { latestFollows: [{ address, name, avatar, header, followers, following }] }
-  app.get<{ Querystring: { limit?: string } }>(
+  app.get<{ Querystring: { limit?: string; offset?: string } }>(
     '/discover',
     async (request) => {
-      const { limit = '20' } = request.query;
-      const limitNum = Math.min(parseInt(limit, 10) || 20, 50);
+      const { limit = '10', offset = '0' } = request.query;
+      const limitNum = Math.min(parseInt(limit, 10) || 10, 50);
+      const offsetNum = parseInt(offset, 10) || 0;
 
       // Get recent unique users who were followed
       const result = await query<{
@@ -69,9 +70,9 @@ export async function statsRoutes(app: FastifyInstance) {
         LEFT JOIN ens_metadata e ON e.address = rf.address
         LEFT JOIN efp_user_stats us ON us.address = rf.address
         ORDER BY rf.updated_at DESC
-        LIMIT $1
+        LIMIT $1 OFFSET $2
       `,
-        [limitNum]
+        [limitNum, offsetNum]
       );
 
       return {
@@ -89,11 +90,12 @@ export async function statsRoutes(app: FastifyInstance) {
 
   // GET /minters (P3)
   // Response shape: { minters: [{ address, name, avatar, list }] }
-  app.get<{ Querystring: { limit?: string } }>(
+  app.get<{ Querystring: { limit?: string; offset?: string } }>(
     '/minters',
     async (request) => {
-      const { limit = '50' } = request.query;
-      const limitNum = Math.min(parseInt(limit, 10) || 50, 100);
+      const { limit = '10', offset = '0' } = request.query;
+      const limitNum = Math.min(parseInt(limit, 10) || 10, 100);
+      const offsetNum = parseInt(offset, 10) || 0;
 
       const result = await query<{
         owner: string;
@@ -106,9 +108,9 @@ export async function statsRoutes(app: FastifyInstance) {
         FROM efp_lists l
         LEFT JOIN ens_metadata e ON e.address = l.owner
         ORDER BY l.token_id DESC
-        LIMIT $1
+        LIMIT $1 OFFSET $2
       `,
-        [limitNum]
+        [limitNum, offsetNum]
       );
 
       return {
