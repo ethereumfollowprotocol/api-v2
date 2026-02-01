@@ -1,10 +1,20 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { getPool, getRedis, getElasticsearch, getSystemState } from '@efp/shared';
 
 export async function healthRoutes(app: FastifyInstance) {
   // Basic health check
   app.get('/health', async () => {
     return { status: 'ok', timestamp: new Date().toISOString() };
+  });
+
+  // Database health check - returns plain text "ok" to match production
+  app.get('/database/health', async (request, reply: FastifyReply) => {
+    try {
+      await getPool().query('SELECT 1');
+      reply.type('text/plain').send('ok');
+    } catch {
+      reply.status(503).type('text/plain').send('error');
+    }
   });
 
   // Service health with dependencies

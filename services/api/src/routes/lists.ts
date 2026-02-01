@@ -89,7 +89,7 @@ export async function listsRoutes(app: FastifyInstance) {
 
       return {
         address,
-        ens,
+        ens: ens || null,
         is_primary_list: isPrimaryList,
         primary_list: primaryList,
       };
@@ -97,6 +97,7 @@ export async function listsRoutes(app: FastifyInstance) {
   );
 
   // GET /lists/:tokenId/details (P1)
+  // Response shape must match production: { address, ens, ranks, primary_list }
   app.get<{ Params: TokenParams }>(
     '/lists/:tokenId/details',
     async (request, reply) => {
@@ -126,12 +127,8 @@ export async function listsRoutes(app: FastifyInstance) {
       ]);
 
       return {
-        token_id: list.token_id,
         address,
-        ens,
-        owner: list.owner,
-        manager: list.manager,
-        user: list.user,
+        ens: ens || null,
         ranks: {
           mutuals_rank: toStringOrNull(ranksResult.rows[0]?.mutuals_rank),
           followers_rank: toStringOrNull(ranksResult.rows[0]?.followers_rank),
@@ -139,6 +136,7 @@ export async function listsRoutes(app: FastifyInstance) {
           top8_rank: toStringOrNull(ranksResult.rows[0]?.top8_rank),
           blocks_rank: ranksResult.rows[0]?.blocks_rank ?? 0,
         },
+        primary_list: tokenId,
       };
     }
   );

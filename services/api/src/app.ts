@@ -9,6 +9,10 @@ import { healthRoutes } from './routes/health.js';
 import { listsRoutes } from './routes/lists.js';
 import { leaderboardRoutes } from './routes/leaderboard.js';
 import { statsRoutes } from './routes/stats.js';
+import { tokenRoutes } from './routes/token.js';
+import { debugRoutes } from './routes/debug.js';
+import { slotsRoutes } from './routes/slots.js';
+import { exportRoutes } from './routes/export.js';
 
 const logger = createLogger('api');
 
@@ -68,6 +72,10 @@ export async function buildApp() {
   await app.register(listsRoutes, { prefix: '/api/v1' });
   await app.register(leaderboardRoutes, { prefix: '/api/v1' });
   await app.register(statsRoutes, { prefix: '/api/v1' });
+  await app.register(tokenRoutes, { prefix: '/api/v1' });
+  await app.register(debugRoutes, { prefix: '/api/v1' });
+  await app.register(slotsRoutes, { prefix: '/api/v1' });
+  await app.register(exportRoutes, { prefix: '/api/v1' });
 
   // Also register at root for backwards compat
   await app.register(healthRoutes);
