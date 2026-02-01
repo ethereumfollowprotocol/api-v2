@@ -4,24 +4,25 @@
 
 | Status | Count | Description |
 |--------|-------|-------------|
-| **Implemented & Passing** | 10 | Response matches production exactly |
-| **Implemented (data mismatch)** | 56 | Code correct, local DB has different/no data |
+| **Implemented & Passing** | 11 | Response matches production exactly |
+| **Implemented (data mismatch)** | 55 | Code correct, local DB has different/no data |
 | **Intentionally Different** | 1 | `/leaderboard/mutuals` - prod returns 404, we implement it |
 | **Invalid Test Path** | 1 | `/slots/.../details` - test path is invalid |
 
 ---
 
-## Passing Endpoints (10)
+## Passing Endpoints (11)
 
 These endpoints return identical responses to production:
 
 - `GET /health`
 - `GET /database/health`
-- `GET /debug/total-supply`
 - `GET /users/:addr/primary-list`
+- `GET /users/:addr/mutuals` (both return 501)
 - `GET /users/:addr/tags`
 - `GET /users/:addr/searchFollowing`
 - `GET /users/:addr/badges`
+- `GET /users/:addr/:target/followerState`
 - `GET /users/:addr/notifications`
 - `GET /users/:addr/blocks` (both return 501)
 - `GET /users/:addr/mutes` (both return 501)
@@ -76,12 +77,10 @@ These endpoints are implemented correctly but show differences because:
 - `GET /users/:addr/allFollowing`
 - `GET /users/:addr/latestFollowers`
 - `GET /users/:addr/allFollowingAddresses`
-- `GET /users/:addr/mutuals`
 - `GET /users/:addr/taggedAs`
 - `GET /users/:addr/searchFollowers`
 - `GET /users/:addr/recommended`
 - `GET /users/:addr/recommended/details`
-- `GET /users/:addr/:target/followerState`
 - `GET /users/:addr/:target/relationship`
 - `GET /users/:addr/relationships`
 - `GET /users/:addr/commonFollowers`

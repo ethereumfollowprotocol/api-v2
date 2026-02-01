@@ -45,7 +45,7 @@ export async function exportRoutes(app: FastifyInstance) {
         tags: string[] | null;
       }>(
         `
-        SELECT r.record_version, r.record_type, '0x' || encode(r.record_data, 'hex') as record_data,
+        SELECT r.record_version, r.record_type, convert_from(r.record_data, 'UTF8') as record_data,
                array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL) as tags
         FROM efp_list_records r
         LEFT JOIN efp_list_record_tags t ON

@@ -172,22 +172,11 @@ export async function usersRoutes(app: FastifyInstance) {
   );
 
   // GET /users/:addressOrENS/mutuals (P1)
+  // Note: Production returns 501 "Not implemented" - matching for compatibility
   app.get<{ Params: AddressParams; Querystring: PaginationQuery }>(
     '/users/:addressOrENS/mutuals',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
-      if (!address) return;
-
-      const { limit = '10', offset = '0', sort = 'latest', include } = request.query;
-
-      const mutuals = await getMutuals(address, {
-        limit: Math.min(parseInt(limit, 10) || 10, 100),
-        offset: parseInt(offset, 10) || 0,
-        sort: sort as 'latest' | 'followers' | 'earliest',
-        includeENS: include?.includes('ens'),
-      });
-
-      return { mutuals };
+      return reply.status(501).send('Not implemented');
     }
   );
 
@@ -614,7 +603,7 @@ export async function usersRoutes(app: FastifyInstance) {
         tags: string[] | null;
       }>(
         `
-        SELECT r.record_version, r.record_type, '0x' || encode(r.record_data, 'hex') as record_data,
+        SELECT r.record_version, r.record_type, convert_from(r.record_data, 'UTF8') as record_data,
                array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL) as tags
         FROM efp_list_records r
         LEFT JOIN efp_list_record_tags t ON
