@@ -22,7 +22,7 @@ const MIGRATIONS = [
           created_at,
           updated_at
       )
-      SELECT
+      SELECT DISTINCT ON (address)
           address,
           primary_list_id,
           0 as followers_count,
@@ -50,17 +50,18 @@ const MIGRATIONS = [
           WHERE l."user" IS NOT NULL
             AND l."user" != ''
 
-          UNION
+          UNION ALL
 
           -- All addresses that have been followed (from record_data)
           SELECT DISTINCT
-              '0x' || encode(r.record_data, 'hex') as address,
+              convert_from(r.record_data, 'UTF8') as address,
               NULL::BIGINT as primary_list_id
           FROM efp_list_records r
           WHERE r.record_type = 1  -- Address record type
       ) all_addresses
       WHERE address IS NOT NULL
         AND address ~ '^0x[a-f0-9]{40}$'
+      ORDER BY address, primary_list_id NULLS LAST
       ON CONFLICT (address) DO UPDATE SET
           primary_list_id = COALESCE(EXCLUDED.primary_list_id, efp_user_stats.primary_list_id),
           updated_at = NOW()
@@ -81,7 +82,7 @@ const MIGRATIONS = [
           updated_at
       )
       SELECT
-          '0x' || encode(r.record_data, 'hex') as address,
+          convert_from(r.record_data, 'UTF8') as address,
           l."user" as follower_address,
           l.token_id as follower_list_id,
           EXISTS (
@@ -151,7 +152,7 @@ const MIGRATIONS = [
       SELECT
           l."user" as address,
           l.token_id as list_id,
-          '0x' || encode(r.record_data, 'hex') as following_address,
+          convert_from(r.record_data, 'UTF8') as following_address,
           EXISTS (
               SELECT 1 FROM efp_list_record_tags t
               WHERE t.chain_id = r.chain_id

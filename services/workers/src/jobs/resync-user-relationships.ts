@@ -65,7 +65,7 @@ export async function handleResyncUserRelationships(
           `
           INSERT INTO efp_followers (address, follower_address, follower_list_id, is_blocked, is_muted, tags)
           SELECT
-            '0x' || encode(r.record_data, 'hex'),
+            convert_from(r.record_data, 'UTF8'),
             $4,
             $1,
             EXISTS (SELECT 1 FROM efp_list_record_tags t WHERE t.chain_id = r.chain_id AND t.contract_address = r.contract_address AND t.slot = r.slot AND t.record = r.record AND t.tag = 'block'),
@@ -93,7 +93,7 @@ export async function handleResyncUserRelationships(
           SELECT
             $4,
             $1,
-            '0x' || encode(r.record_data, 'hex'),
+            convert_from(r.record_data, 'UTF8'),
             EXISTS (SELECT 1 FROM efp_list_record_tags t WHERE t.chain_id = r.chain_id AND t.contract_address = r.contract_address AND t.slot = r.slot AND t.record = r.record AND t.tag = 'block'),
             EXISTS (SELECT 1 FROM efp_list_record_tags t WHERE t.chain_id = r.chain_id AND t.contract_address = r.contract_address AND t.slot = r.slot AND t.record = r.record AND t.tag = 'mute'),
             COALESCE((SELECT array_agg(DISTINCT t.tag ORDER BY t.tag) FROM efp_list_record_tags t WHERE t.chain_id = r.chain_id AND t.contract_address = r.contract_address AND t.slot = r.slot AND t.record = r.record), '{}')
