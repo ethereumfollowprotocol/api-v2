@@ -333,4 +333,241 @@ export async function listsRoutes(app: FastifyInstance) {
       return { records };
     }
   );
+
+  // GET /lists/:tokenId/latestFollowers (P2)
+  app.get<{ Params: TokenParams; Querystring: PaginationQuery }>(
+    '/lists/:tokenId/latestFollowers',
+    async (request, reply) => {
+      const { tokenId } = request.params;
+      const list = await getListInfo(tokenId);
+
+      if (!list) {
+        return reply.status(404).send({ response: 'List not found' });
+      }
+
+      const address = list.user || list.owner;
+      const { limit = '10', offset = '0', include } = request.query;
+
+      const followers = await getFollowers(address, {
+        limit: Math.min(parseInt(limit, 10) || 10, 100),
+        offset: parseInt(offset, 10) || 0,
+        sort: 'latest',
+        includeENS: include?.includes('ens'),
+      });
+
+      return { followers };
+    }
+  );
+
+  // GET /lists/:tokenId/allFollowingAddresses (P2)
+  app.get<{ Params: TokenParams; Querystring: PaginationQuery }>(
+    '/lists/:tokenId/allFollowingAddresses',
+    async (request, reply) => {
+      const { tokenId } = request.params;
+      const list = await getListInfo(tokenId);
+
+      if (!list) {
+        return reply.status(404).send({ response: 'List not found' });
+      }
+
+      const address = list.user || list.owner;
+
+      const following = await getFollowing(address, {
+        limit: 100000,
+        offset: 0,
+        sort: 'latest',
+      });
+
+      // Return just the addresses as an array
+      return following.map((f: { address: string }) => f.address);
+    }
+  );
+
+  // GET /lists/:tokenId/recommended (P3)
+  app.get<{ Params: TokenParams; Querystring: { limit?: string; offset?: string; seed?: string } }>(
+    '/lists/:tokenId/recommended',
+    async (request, reply) => {
+      const { tokenId } = request.params;
+      const list = await getListInfo(tokenId);
+
+      if (!list) {
+        return reply.status(404).send({ response: 'List not found' });
+      }
+
+      // TODO: Implement recommendation algorithm
+      return { recommended: [] };
+    }
+  );
+
+  // GET /lists/:tokenId/recommended/details (P3)
+  app.get<{ Params: TokenParams; Querystring: { limit?: string; offset?: string } }>(
+    '/lists/:tokenId/recommended/details',
+    async (request, reply) => {
+      const { tokenId } = request.params;
+      const list = await getListInfo(tokenId);
+
+      if (!list) {
+        return reply.status(404).send({ response: 'List not found' });
+      }
+
+      // TODO: Implement recommendation algorithm with details
+      return { recommended: [] };
+    }
+  );
+
+  // GET /lists/:tokenId/searchFollowers (P3)
+  app.get<{ Params: TokenParams; Querystring: { term?: string; limit?: string; offset?: string; include?: string } }>(
+    '/lists/:tokenId/searchFollowers',
+    async (request, reply) => {
+      const { tokenId } = request.params;
+      const { term = '', limit = '10', offset = '0' } = request.query;
+      const list = await getListInfo(tokenId);
+
+      if (!list) {
+        return reply.status(404).send({ response: 'List not found' });
+      }
+
+      if (!term || term.length < 2) {
+        return { followers: [] };
+      }
+
+      // TODO: Implement search in Elasticsearch
+      return { followers: [] };
+    }
+  );
+
+  // GET /lists/:tokenId/searchFollowing (P3)
+  app.get<{ Params: TokenParams; Querystring: { term?: string; limit?: string; offset?: string; include?: string } }>(
+    '/lists/:tokenId/searchFollowing',
+    async (request, reply) => {
+      const { tokenId } = request.params;
+      const { term = '', limit = '10', offset = '0' } = request.query;
+      const list = await getListInfo(tokenId);
+
+      if (!list) {
+        return reply.status(404).send({ response: 'List not found' });
+      }
+
+      if (!term || term.length < 2) {
+        return { following: [] };
+      }
+
+      // TODO: Implement search in Elasticsearch
+      return { following: [] };
+    }
+  );
+
+  // GET /lists/:tokenId/tags (P2)
+  app.get<{ Params: TokenParams }>(
+    '/lists/:tokenId/tags',
+    async (request, reply) => {
+      const { tokenId } = request.params;
+      const list = await getListInfo(tokenId);
+
+      if (!list) {
+        return reply.status(404).send({ response: 'List not found' });
+      }
+
+      // Get all tags used by this list
+      const listResult = await query<{
+        list_storage_location_chain_id: number;
+        list_storage_location_contract_address: string;
+        list_storage_location_slot: string;
+      }>(
+        `SELECT list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot
+         FROM efp_lists WHERE token_id = $1`,
+        [tokenId]
+      );
+
+      if (listResult.rows.length === 0) {
+        return { token_id: tokenId, tags: [], tagCounts: {}, taggedAddresses: {} };
+      }
+
+      const { list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot } =
+        listResult.rows[0];
+
+      const tagsResult = await query<{ tag: string; count: string }>(
+        `SELECT tag, COUNT(*)::TEXT as count
+         FROM efp_list_record_tags
+         WHERE chain_id = $1 AND contract_address = $2 AND slot = $3
+         GROUP BY tag`,
+        [list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot]
+      );
+
+      const tags = tagsResult.rows.map((r) => r.tag);
+      const tagCounts: Record<string, string> = {};
+      tagsResult.rows.forEach((r) => {
+        tagCounts[r.tag] = r.count;
+      });
+
+      return {
+        token_id: tokenId,
+        tags,
+        tagCounts,
+        taggedAddresses: {}, // TODO: Implement tagged addresses mapping
+      };
+    }
+  );
+
+  // GET /lists/:tokenId/taggedAs (P3)
+  app.get<{ Params: TokenParams }>(
+    '/lists/:tokenId/taggedAs',
+    async (request, reply) => {
+      const { tokenId } = request.params;
+      const list = await getListInfo(tokenId);
+
+      if (!list) {
+        return reply.status(404).send({ response: 'List not found' });
+      }
+
+      // TODO: Implement - find what tags other lists have assigned to this list's user
+      return {
+        token_id: tokenId,
+        tags: [],
+        tagCounts: {},
+        taggedAddresses: {},
+      };
+    }
+  );
+
+  // GET /lists/:tokenId/badges (P3)
+  app.get<{ Params: TokenParams }>(
+    '/lists/:tokenId/badges',
+    async (request, reply) => {
+      const { tokenId } = request.params;
+      const list = await getListInfo(tokenId);
+
+      if (!list) {
+        return reply.status(404).send({ response: 'List not found' });
+      }
+
+      // TODO: Implement POAP badges lookup
+      return { poaps: [] };
+    }
+  );
+
+  // GET /lists/:tokenId/:addressOrENS/followerState (P2)
+  app.get<{ Params: TokenParams & { addressOrENS: string } }>(
+    '/lists/:tokenId/:addressOrENS/followerState',
+    async (request, reply) => {
+      const { tokenId, addressOrENS } = request.params;
+      const list = await getListInfo(tokenId);
+
+      if (!list) {
+        return reply.status(404).send({ response: 'List not found' });
+      }
+
+      // TODO: Implement follower state lookup
+      return {
+        token_id: tokenId,
+        address: addressOrENS,
+        state: {
+          is_following: false,
+          is_blocked: false,
+          is_muted: false,
+          tags: [],
+        },
+      };
+    }
+  );
 }

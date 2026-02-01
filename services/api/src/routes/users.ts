@@ -226,4 +226,173 @@ export async function usersRoutes(app: FastifyInstance) {
       };
     }
   );
+
+  // GET /users/:addressOrENS/latestFollowers (P2)
+  app.get<{ Params: AddressParams; Querystring: PaginationQuery }>(
+    '/users/:addressOrENS/latestFollowers',
+    async (request, reply) => {
+      const address = await resolveAddress(request.params.addressOrENS, reply);
+      if (!address) return;
+
+      const { limit = '10', include } = request.query;
+
+      const followers = await getFollowers(address, {
+        limit: Math.min(parseInt(limit, 10) || 10, 100),
+        offset: 0,
+        sort: 'latest',
+        includeENS: include?.includes('ens'),
+      });
+
+      return { followers };
+    }
+  );
+
+  // GET /users/:addressOrENS/allFollowingAddresses (P2)
+  app.get<{ Params: AddressParams }>(
+    '/users/:addressOrENS/allFollowingAddresses',
+    async (request, reply) => {
+      const address = await resolveAddress(request.params.addressOrENS, reply);
+      if (!address) return;
+
+      const following = await getAllFollowing(address, {
+        sort: 'latest',
+      });
+
+      return following.map((f: { address: string }) => f.address);
+    }
+  );
+
+  // GET /users/:addressOrENS/recommended (P3)
+  app.get<{ Params: AddressParams; Querystring: { limit?: string; offset?: string; seed?: string } }>(
+    '/users/:addressOrENS/recommended',
+    async (request, reply) => {
+      const address = await resolveAddress(request.params.addressOrENS, reply);
+      if (!address) return;
+
+      // TODO: Implement recommendation algorithm
+      return { recommended: [] };
+    }
+  );
+
+  // GET /users/:addressOrENS/recommended/details (P3)
+  app.get<{ Params: AddressParams; Querystring: { limit?: string; offset?: string } }>(
+    '/users/:addressOrENS/recommended/details',
+    async (request, reply) => {
+      const address = await resolveAddress(request.params.addressOrENS, reply);
+      if (!address) return;
+
+      // TODO: Implement recommendation algorithm with details
+      return { recommended: [] };
+    }
+  );
+
+  // GET /users/:addressOrENS/searchFollowers (P3)
+  app.get<{ Params: AddressParams; Querystring: { term?: string; limit?: string; offset?: string; include?: string } }>(
+    '/users/:addressOrENS/searchFollowers',
+    async (request, reply) => {
+      const address = await resolveAddress(request.params.addressOrENS, reply);
+      if (!address) return;
+
+      const { term = '' } = request.query;
+
+      if (!term || term.length < 2) {
+        return { followers: [] };
+      }
+
+      // TODO: Implement search in Elasticsearch
+      return { followers: [] };
+    }
+  );
+
+  // GET /users/:addressOrENS/searchFollowing (P3)
+  app.get<{ Params: AddressParams; Querystring: { term?: string; limit?: string; offset?: string; include?: string } }>(
+    '/users/:addressOrENS/searchFollowing',
+    async (request, reply) => {
+      const address = await resolveAddress(request.params.addressOrENS, reply);
+      if (!address) return;
+
+      const { term = '' } = request.query;
+
+      if (!term || term.length < 2) {
+        return { following: [] };
+      }
+
+      // TODO: Implement search in Elasticsearch
+      return { following: [] };
+    }
+  );
+
+  // GET /users/:addressOrENS/tags (P2)
+  app.get<{ Params: AddressParams }>(
+    '/users/:addressOrENS/tags',
+    async (request, reply) => {
+      const address = await resolveAddress(request.params.addressOrENS, reply);
+      if (!address) return;
+
+      // TODO: Implement - get all tags this user has applied
+      return {
+        address,
+        tags: [],
+        tagCounts: {},
+        taggedAddresses: {},
+      };
+    }
+  );
+
+  // GET /users/:addressOrENS/taggedAs (P3)
+  app.get<{ Params: AddressParams }>(
+    '/users/:addressOrENS/taggedAs',
+    async (request, reply) => {
+      const address = await resolveAddress(request.params.addressOrENS, reply);
+      if (!address) return;
+
+      // TODO: Implement - find what tags others have assigned to this user
+      return {
+        address,
+        tags: [],
+        tagCounts: {},
+        taggedAddresses: {},
+      };
+    }
+  );
+
+  // GET /users/:addressOrENS/badges (P3)
+  app.get<{ Params: AddressParams }>(
+    '/users/:addressOrENS/badges',
+    async (request, reply) => {
+      const address = await resolveAddress(request.params.addressOrENS, reply);
+      if (!address) return;
+
+      // TODO: Implement POAP badges lookup
+      return { poaps: [] };
+    }
+  );
+
+  // GET /users/:addressOrENS/:targetAddressOrENS/relationship (P2)
+  app.get<{ Params: AddressParams & { targetAddressOrENS: string } }>(
+    '/users/:addressOrENS/:targetAddressOrENS/relationship',
+    async (request, reply) => {
+      const address = await resolveAddress(request.params.addressOrENS, reply);
+      if (!address) return;
+
+      const targetAddress = await resolveAddressOrENS(request.params.targetAddressOrENS);
+      if (!targetAddress) {
+        return reply.status(400).send({ response: 'Invalid target address' });
+      }
+
+      // TODO: Implement relationship lookup
+      return {
+        source: address,
+        target: targetAddress,
+        state: {
+          is_following: false,
+          is_followed_by: false,
+          is_blocked: false,
+          is_blocked_by: false,
+          is_muted: false,
+          is_muted_by: false,
+        },
+      };
+    }
+  );
 }
