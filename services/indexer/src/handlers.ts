@@ -40,26 +40,34 @@ interface TagDelete {
   tag: string;
 }
 
+// PostgreSQL has a limit of ~65535 parameters per query
+// With 7 fields per record, we can safely do ~500 records per batch
+const BATCH_CHUNK_SIZE = 500;
+
 export async function batchInsertRecords(records: RecordInsert[]): Promise<void> {
   if (records.length === 0) return;
 
-  // Build multi-value INSERT
-  const values: unknown[] = [];
-  const placeholders: string[] = [];
+  // Process in chunks to avoid PostgreSQL parameter limits
+  for (let chunkStart = 0; chunkStart < records.length; chunkStart += BATCH_CHUNK_SIZE) {
+    const chunk = records.slice(chunkStart, chunkStart + BATCH_CHUNK_SIZE);
 
-  for (let i = 0; i < records.length; i++) {
-    const r = records[i];
-    const offset = i * 7;
-    placeholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, NOW())`);
-    values.push(r.chainId, r.contractAddress, r.slot, r.record, r.recordVersion, r.recordType, r.recordData);
+    const values: unknown[] = [];
+    const placeholders: string[] = [];
+
+    for (let i = 0; i < chunk.length; i++) {
+      const r = chunk[i];
+      const offset = i * 7;
+      placeholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, NOW())`);
+      values.push(r.chainId, r.contractAddress, r.slot, r.record, r.recordVersion, r.recordType, r.recordData);
+    }
+
+    await query(
+      `INSERT INTO efp_list_records (chain_id, contract_address, slot, record, record_version, record_type, record_data, created_at)
+       VALUES ${placeholders.join(', ')}
+       ON CONFLICT (chain_id, contract_address, slot, record) DO NOTHING`,
+      values
+    );
   }
-
-  await query(
-    `INSERT INTO efp_list_records (chain_id, contract_address, slot, record, record_version, record_type, record_data, created_at)
-     VALUES ${placeholders.join(', ')}
-     ON CONFLICT (chain_id, contract_address, slot, record) DO NOTHING`,
-    values
-  );
 
   logger.info({ count: records.length }, 'Batch inserted records');
 }
@@ -67,22 +75,29 @@ export async function batchInsertRecords(records: RecordInsert[]): Promise<void>
 export async function batchInsertTags(tags: TagInsert[]): Promise<void> {
   if (tags.length === 0) return;
 
-  const values: unknown[] = [];
-  const placeholders: string[] = [];
+  // Process in chunks (5 fields per tag, so ~1000 per batch is safe)
+  const TAG_CHUNK_SIZE = 1000;
 
-  for (let i = 0; i < tags.length; i++) {
-    const t = tags[i];
-    const offset = i * 5;
-    placeholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, NOW())`);
-    values.push(t.chainId, t.contractAddress, t.slot, t.record, t.tag);
+  for (let chunkStart = 0; chunkStart < tags.length; chunkStart += TAG_CHUNK_SIZE) {
+    const chunk = tags.slice(chunkStart, chunkStart + TAG_CHUNK_SIZE);
+
+    const values: unknown[] = [];
+    const placeholders: string[] = [];
+
+    for (let i = 0; i < chunk.length; i++) {
+      const t = chunk[i];
+      const offset = i * 5;
+      placeholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, NOW())`);
+      values.push(t.chainId, t.contractAddress, t.slot, t.record, t.tag);
+    }
+
+    await query(
+      `INSERT INTO efp_list_record_tags (chain_id, contract_address, slot, record, tag, created_at)
+       VALUES ${placeholders.join(', ')}
+       ON CONFLICT (chain_id, contract_address, slot, record, tag) DO NOTHING`,
+      values
+    );
   }
-
-  await query(
-    `INSERT INTO efp_list_record_tags (chain_id, contract_address, slot, record, tag, created_at)
-     VALUES ${placeholders.join(', ')}
-     ON CONFLICT (chain_id, contract_address, slot, record, tag) DO NOTHING`,
-    values
-  );
 
   logger.info({ count: tags.length }, 'Batch inserted tags');
 }
