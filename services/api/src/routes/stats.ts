@@ -5,32 +5,32 @@ const logger = createLogger('stats-routes');
 
 export async function statsRoutes(app: FastifyInstance) {
   // GET /stats (P1)
+  // Response shape must match production: { stats: { address_count, list_count, list_op_count, user_count } }
   app.get('/stats', async () => {
     const result = await query<{
-      total_users: string;
-      total_lists: string;
-      total_follows: string;
-      total_blocks: string;
-      total_mutes: string;
+      address_count: string;
+      list_count: string;
+      list_op_count: string;
+      user_count: string;
     }>(
       `
       SELECT
-        (SELECT COUNT(DISTINCT address)::TEXT FROM efp_user_stats) as total_users,
-        (SELECT COUNT(*)::TEXT FROM efp_lists) as total_lists,
-        (SELECT COUNT(*)::TEXT FROM efp_followers WHERE is_blocked = FALSE AND is_muted = FALSE) as total_follows,
-        (SELECT COUNT(*)::TEXT FROM efp_followers WHERE is_blocked = TRUE) as total_blocks,
-        (SELECT COUNT(*)::TEXT FROM efp_followers WHERE is_muted = TRUE) as total_mutes
+        (SELECT COUNT(DISTINCT address)::TEXT FROM efp_user_stats) as address_count,
+        (SELECT COUNT(*)::TEXT FROM efp_lists) as list_count,
+        (SELECT COUNT(*)::TEXT FROM efp_list_records) as list_op_count,
+        (SELECT COUNT(DISTINCT owner)::TEXT FROM efp_lists) as user_count
     `
     );
 
     const row = result.rows[0];
 
     return {
-      total_users: parseInt(row?.total_users || '0', 10),
-      total_lists: parseInt(row?.total_lists || '0', 10),
-      total_follows: parseInt(row?.total_follows || '0', 10),
-      total_blocks: parseInt(row?.total_blocks || '0', 10),
-      total_mutes: parseInt(row?.total_mutes || '0', 10),
+      stats: {
+        address_count: row?.address_count || '0',
+        list_count: row?.list_count || '0',
+        list_op_count: row?.list_op_count || '0',
+        user_count: row?.user_count || '0',
+      },
     };
   });
 
@@ -57,8 +57,9 @@ export async function statsRoutes(app: FastifyInstance) {
         [limitNum]
       );
 
+      // Response shape must match production: { latestFollows: [...] }
       return {
-        recent_follows: result.rows.map((row) => ({
+        latestFollows: result.rows.map((row) => ({
           followed: row.address,
           follower: row.follower_address,
           timestamp: row.updated_at.toISOString(),

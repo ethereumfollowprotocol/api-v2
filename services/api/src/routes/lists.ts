@@ -53,6 +53,7 @@ async function getListInfo(
 
 export async function listsRoutes(app: FastifyInstance) {
   // GET /lists/:tokenId/account (P1)
+  // Response shape must match production: { address, ens, is_primary_list, primary_list }
   app.get<{ Params: TokenParams }>(
     '/lists/:tokenId/account',
     async (request, reply) => {
@@ -65,12 +66,28 @@ export async function listsRoutes(app: FastifyInstance) {
 
       // Get ENS for user or owner
       const address = list.user || list.owner;
-      const ens = await getENSProfile(address);
+
+      // Get primary list for the address
+      const [ens, primaryListResult] = await Promise.all([
+        getENSProfile(address),
+        query<{ value: string }>(
+          `SELECT value FROM efp_account_metadata WHERE address = $1 AND key = 'primary-list'`,
+          [address]
+        ),
+      ]);
+
+      let primaryList: string | null = null;
+      if (primaryListResult.rows[0]?.value) {
+        primaryList = convertHexToBigInt(primaryListResult.rows[0].value).toString();
+      }
+
+      const isPrimaryList = primaryList === tokenId;
 
       return {
-        token_id: list.token_id,
         address,
         ens,
+        is_primary_list: isPrimaryList,
+        primary_list: primaryList,
       };
     }
   );
@@ -255,6 +272,7 @@ export async function listsRoutes(app: FastifyInstance) {
   );
 
   // GET /lists/:tokenId/records (P2)
+  // Response shape must match production: { records: [{ version, record_type: "address", data, tags }] }
   app.get<{ Params: TokenParams }>(
     '/lists/:tokenId/records',
     async (request, reply) => {
@@ -264,7 +282,7 @@ export async function listsRoutes(app: FastifyInstance) {
       const listResult = await query<{
         list_storage_location_chain_id: number;
         list_storage_location_contract_address: string;
-        list_storage_location_slot: Buffer;
+        list_storage_location_slot: string;
       }>(
         `SELECT list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot
          FROM efp_lists WHERE token_id = $1`,
@@ -278,24 +296,38 @@ export async function listsRoutes(app: FastifyInstance) {
       const { list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot } =
         listResult.rows[0];
 
-      // Get records from this storage location
+      // Get records with their tags
       const recordsResult = await query<{
-        record: Buffer;
         record_version: number;
         record_type: number;
-        record_data: Buffer;
+        record_data: string;
+        tags: string[] | null;
       }>(
-        `SELECT record, record_version, record_type, record_data
-         FROM efp_list_records
-         WHERE chain_id = $1 AND contract_address = $2 AND slot = $3`,
+        `SELECT r.record_version, r.record_type, r.record_data,
+                array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL) as tags
+         FROM efp_list_records r
+         LEFT JOIN efp_list_record_tags t ON
+           t.chain_id = r.chain_id AND
+           t.contract_address = r.contract_address AND
+           t.slot = r.slot AND
+           t.record = r.record
+         WHERE r.chain_id = $1 AND r.contract_address = $2 AND r.slot = $3
+         GROUP BY r.record_version, r.record_type, r.record_data, r.record`,
         [list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot]
       );
 
+      // Map record_type number to string
+      const recordTypeMap: Record<number, string> = {
+        1: 'address',
+        2: 'nft',
+        3: 'list',
+      };
+
       const records = recordsResult.rows.map((row) => ({
-        record: '0x' + row.record.toString('hex'),
         version: row.record_version,
-        record_type: row.record_type,
-        data: '0x' + row.record_data.toString('hex'),
+        record_type: recordTypeMap[row.record_type] || 'unknown',
+        data: row.record_data,
+        tags: row.tags,
       }));
 
       return { records };

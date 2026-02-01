@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { createLogger, type Address } from '@efp/shared';
 import { resolveAddressOrENS, isENSName } from '../services/address.js';
-import { getUserAccount, getUserDetails, getUserStats } from '../services/users.js';
+import { getUserAccount, getUserDetails, getUserStats, getUserLists } from '../services/users.js';
 import {
   getFollowers,
   getFollowing,
@@ -175,6 +175,7 @@ export async function usersRoutes(app: FastifyInstance) {
   );
 
   // GET /users/:addressOrENS/ens (P2)
+  // Response shape must match production: { ens: { name, address, avatar, records, updated_at } }
   app.get<{ Params: AddressParams }>(
     '/users/:addressOrENS/ens',
     async (request, reply) => {
@@ -182,7 +183,15 @@ export async function usersRoutes(app: FastifyInstance) {
       if (!address) return;
 
       const account = await getUserAccount(address);
-      return account.ens || { name: null, avatar: null };
+      return {
+        ens: {
+          name: account.ens?.name || null,
+          address,
+          avatar: account.ens?.avatar || null,
+          records: account.ens?.records || {},
+          updated_at: account.ens?.updated_at || new Date().toISOString(),
+        },
+      };
     }
   );
 
@@ -199,14 +208,22 @@ export async function usersRoutes(app: FastifyInstance) {
   );
 
   // GET /users/:addressOrENS/lists (P2)
+  // Response shape must match production: { primary_list: "str"|null, lists: ["tokenId1", ...] }
   app.get<{ Params: AddressParams }>(
     '/users/:addressOrENS/lists',
     async (request, reply) => {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      // TODO: Implement lists endpoint
-      return { lists: [] };
+      const [userLists, details] = await Promise.all([
+        getUserLists(address),
+        getUserDetails(address),
+      ]);
+
+      return {
+        primary_list: details.primary_list,
+        lists: userLists.map((l) => l.token_id),
+      };
     }
   );
 }

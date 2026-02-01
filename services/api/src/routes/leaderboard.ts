@@ -115,6 +115,7 @@ export async function leaderboardRoutes(app: FastifyInstance) {
   );
 
   // GET /leaderboard/followers (P1)
+  // Response shape must match production: [{ rank, address, followers_count: "string" }]
   app.get<{ Querystring: LeaderboardQuery }>(
     '/leaderboard/followers',
     async (request) => {
@@ -139,12 +140,13 @@ export async function leaderboardRoutes(app: FastifyInstance) {
       return result.rows.map((row) => ({
         rank: row.followers_rank,
         address: row.address.toLowerCase() as Address,
-        followers_count: row.followers_count,
+        followers_count: row.followers_count.toString(),
       }));
     }
   );
 
   // GET /leaderboard/following (P1)
+  // Response shape must match production: [{ rank, address, following_count: "string" }]
   app.get<{ Querystring: LeaderboardQuery }>(
     '/leaderboard/following',
     async (request) => {
@@ -169,12 +171,13 @@ export async function leaderboardRoutes(app: FastifyInstance) {
       return result.rows.map((row) => ({
         rank: row.following_rank,
         address: row.address.toLowerCase() as Address,
-        following_count: row.following_count,
+        following_count: row.following_count.toString(),
       }));
     }
   );
 
   // GET /leaderboard/blocks (P2)
+  // Response shape must match production: [{ rank, address, blocks_count: "string" }]
   app.get<{ Querystring: LeaderboardQuery }>(
     '/leaderboard/blocks',
     async (request) => {
@@ -201,19 +204,20 @@ export async function leaderboardRoutes(app: FastifyInstance) {
       return result.rows.map((row) => ({
         rank: row.blocks_rank,
         address: row.address.toLowerCase() as Address,
-        blocks_count: row.blocks_count,
+        blocks_count: row.blocks_count.toString(),
       }));
     }
   );
 
   // GET /leaderboard/count (P2)
+  // Response shape must match production: { leaderboardCount: "string" }
   app.get('/leaderboard/count', async () => {
     const result = await query<{ count: string }>(
       `SELECT COUNT(*)::TEXT as count FROM efp_leaderboard`
     );
 
     return {
-      count: parseInt(result.rows[0]?.count || '0', 10),
+      leaderboardCount: result.rows[0]?.count || '0',
     };
   });
 
