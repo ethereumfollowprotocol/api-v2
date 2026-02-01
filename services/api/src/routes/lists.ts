@@ -1,7 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { query, convertHexToBigInt, toStringOrNull, type Address, createLogger } from '@efp/shared';
 import { getENSProfile } from '../services/ens.js';
-import { getFollowers, getFollowing } from '../services/followers.js';
+import { getFollowers, getFollowing, getFollowerState, searchFollowers, searchFollowing } from '../services/followers.js';
+import { getListTags, getListTaggedAs } from '../services/tags.js';
+import { getRecommendations, getRecommendationsWithDetails } from '../services/recommendations.js';
+import { getPOAPBadges } from '../services/poap.js';
+import { resolveAddressOrENS } from '../services/address.js';
 
 const logger = createLogger('lists-routes');
 
@@ -394,8 +398,16 @@ export async function listsRoutes(app: FastifyInstance) {
         return reply.status(404).send({ response: 'List not found' });
       }
 
-      // TODO: Implement recommendation algorithm
-      return { recommended: [] };
+      const address = list.user || list.owner;
+      const { limit = '10', offset = '0', seed } = request.query;
+
+      const recommended = await getRecommendations(address, {
+        limit: Math.min(parseInt(limit, 10) || 10, 100),
+        offset: parseInt(offset, 10) || 0,
+        seed: seed ? parseInt(seed, 10) : undefined,
+      });
+
+      return { recommended };
     }
   );
 
@@ -410,8 +422,15 @@ export async function listsRoutes(app: FastifyInstance) {
         return reply.status(404).send({ response: 'List not found' });
       }
 
-      // TODO: Implement recommendation algorithm with details
-      return { recommended: [] };
+      const address = list.user || list.owner;
+      const { limit = '10', offset = '0' } = request.query;
+
+      const recommended = await getRecommendationsWithDetails(address, {
+        limit: Math.min(parseInt(limit, 10) || 10, 100),
+        offset: parseInt(offset, 10) || 0,
+      });
+
+      return { recommended };
     }
   );
 
@@ -420,7 +439,7 @@ export async function listsRoutes(app: FastifyInstance) {
     '/lists/:tokenId/searchFollowers',
     async (request, reply) => {
       const { tokenId } = request.params;
-      const { term = '', limit = '10', offset = '0' } = request.query;
+      const { term = '', limit = '10', offset = '0', include } = request.query;
       const list = await getListInfo(tokenId);
 
       if (!list) {
@@ -431,8 +450,14 @@ export async function listsRoutes(app: FastifyInstance) {
         return { followers: [] };
       }
 
-      // TODO: Implement search in Elasticsearch
-      return { followers: [] };
+      const address = list.user || list.owner;
+      const followers = await searchFollowers(address, term, {
+        limit: Math.min(parseInt(limit, 10) || 10, 100),
+        offset: parseInt(offset, 10) || 0,
+        includeENS: include?.includes('ens'),
+      });
+
+      return { followers };
     }
   );
 
@@ -441,7 +466,7 @@ export async function listsRoutes(app: FastifyInstance) {
     '/lists/:tokenId/searchFollowing',
     async (request, reply) => {
       const { tokenId } = request.params;
-      const { term = '', limit = '10', offset = '0' } = request.query;
+      const { term = '', limit = '10', offset = '0', include } = request.query;
       const list = await getListInfo(tokenId);
 
       if (!list) {
@@ -452,8 +477,14 @@ export async function listsRoutes(app: FastifyInstance) {
         return { following: [] };
       }
 
-      // TODO: Implement search in Elasticsearch
-      return { following: [] };
+      const address = list.user || list.owner;
+      const following = await searchFollowing(address, term, {
+        limit: Math.min(parseInt(limit, 10) || 10, 100),
+        offset: parseInt(offset, 10) || 0,
+        includeENS: include?.includes('ens'),
+      });
+
+      return { following };
     }
   );
 
@@ -500,11 +531,29 @@ export async function listsRoutes(app: FastifyInstance) {
         tagCounts[r.tag] = r.count;
       });
 
+      // Get taggedAddresses
+      const taggedAddressesResult = await query<{ tag: string; record_data: string }>(
+        `SELECT t.tag, r.record_data
+         FROM efp_list_record_tags t
+         JOIN efp_list_records r ON
+           r.chain_id = t.chain_id AND
+           r.contract_address = t.contract_address AND
+           r.slot = t.slot AND
+           r.record = t.record
+         WHERE t.chain_id = $1 AND t.contract_address = $2 AND t.slot = $3`,
+        [list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot]
+      );
+
+      const taggedAddresses = taggedAddressesResult.rows.map((r) => ({
+        address: r.record_data.toLowerCase(),
+        tag: r.tag,
+      }));
+
       return {
         token_id: tokenId,
         tags,
-        tagCounts,
-        taggedAddresses: {}, // TODO: Implement tagged addresses mapping
+        tagCounts: tagsResult.rows.map((r) => ({ tag: r.tag, count: parseInt(r.count, 10) })),
+        taggedAddresses,
       };
     }
   );
@@ -520,13 +569,8 @@ export async function listsRoutes(app: FastifyInstance) {
         return reply.status(404).send({ response: 'List not found' });
       }
 
-      // TODO: Implement - find what tags other lists have assigned to this list's user
-      return {
-        token_id: tokenId,
-        tags: [],
-        tagCounts: {},
-        taggedAddresses: {},
-      };
+      const address = list.user || list.owner;
+      return await getListTaggedAs(tokenId, address);
     }
   );
 
@@ -541,8 +585,9 @@ export async function listsRoutes(app: FastifyInstance) {
         return reply.status(404).send({ response: 'List not found' });
       }
 
-      // TODO: Implement POAP badges lookup
-      return { poaps: [] };
+      const address = list.user || list.owner;
+      const poaps = await getPOAPBadges(address);
+      return { poaps };
     }
   );
 
@@ -557,16 +602,18 @@ export async function listsRoutes(app: FastifyInstance) {
         return reply.status(404).send({ response: 'List not found' });
       }
 
-      // TODO: Implement follower state lookup
+      // Resolve address
+      const targetAddress = await resolveAddressOrENS(addressOrENS);
+      if (!targetAddress) {
+        return reply.status(400).send({ response: 'ENS name not valid or does not exist' });
+      }
+
+      const state = await getFollowerState(tokenId, targetAddress);
+
       return {
         token_id: tokenId,
-        address: addressOrENS,
-        state: {
-          is_following: false,
-          is_blocked: false,
-          is_muted: false,
-          tags: [],
-        },
+        address: targetAddress,
+        state,
       };
     }
   );

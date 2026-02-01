@@ -7,7 +7,14 @@ import {
   getFollowing,
   getAllFollowers,
   getAllFollowing,
+  getMutuals,
+  getRelationship,
+  searchFollowers,
+  searchFollowing,
 } from '../services/followers.js';
+import { getUserTags, getUserTaggedAs } from '../services/tags.js';
+import { getRecommendations, getRecommendationsWithDetails } from '../services/recommendations.js';
+import { getPOAPBadges } from '../services/poap.js';
 
 const logger = createLogger('users-routes');
 
@@ -169,8 +176,16 @@ export async function usersRoutes(app: FastifyInstance) {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      // TODO: Implement mutuals endpoint
-      return { mutuals: [] };
+      const { limit = '10', offset = '0', sort = 'latest', include } = request.query;
+
+      const mutuals = await getMutuals(address, {
+        limit: Math.min(parseInt(limit, 10) || 10, 100),
+        offset: parseInt(offset, 10) || 0,
+        sort: sort as 'latest' | 'followers' | 'earliest',
+        includeENS: include?.includes('ens'),
+      });
+
+      return { mutuals };
     }
   );
 
@@ -269,8 +284,15 @@ export async function usersRoutes(app: FastifyInstance) {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      // TODO: Implement recommendation algorithm
-      return { recommended: [] };
+      const { limit = '10', offset = '0', seed } = request.query;
+
+      const recommended = await getRecommendations(address, {
+        limit: Math.min(parseInt(limit, 10) || 10, 100),
+        offset: parseInt(offset, 10) || 0,
+        seed: seed ? parseInt(seed, 10) : undefined,
+      });
+
+      return { recommended };
     }
   );
 
@@ -281,8 +303,14 @@ export async function usersRoutes(app: FastifyInstance) {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      // TODO: Implement recommendation algorithm with details
-      return { recommended: [] };
+      const { limit = '10', offset = '0' } = request.query;
+
+      const recommended = await getRecommendationsWithDetails(address, {
+        limit: Math.min(parseInt(limit, 10) || 10, 100),
+        offset: parseInt(offset, 10) || 0,
+      });
+
+      return { recommended };
     }
   );
 
@@ -293,14 +321,19 @@ export async function usersRoutes(app: FastifyInstance) {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      const { term = '' } = request.query;
+      const { term = '', limit = '10', offset = '0', include } = request.query;
 
       if (!term || term.length < 2) {
         return { followers: [] };
       }
 
-      // TODO: Implement search in Elasticsearch
-      return { followers: [] };
+      const followers = await searchFollowers(address, term, {
+        limit: Math.min(parseInt(limit, 10) || 10, 100),
+        offset: parseInt(offset, 10) || 0,
+        includeENS: include?.includes('ens'),
+      });
+
+      return { followers };
     }
   );
 
@@ -311,14 +344,19 @@ export async function usersRoutes(app: FastifyInstance) {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      const { term = '' } = request.query;
+      const { term = '', limit = '10', offset = '0', include } = request.query;
 
       if (!term || term.length < 2) {
         return { following: [] };
       }
 
-      // TODO: Implement search in Elasticsearch
-      return { following: [] };
+      const following = await searchFollowing(address, term, {
+        limit: Math.min(parseInt(limit, 10) || 10, 100),
+        offset: parseInt(offset, 10) || 0,
+        includeENS: include?.includes('ens'),
+      });
+
+      return { following };
     }
   );
 
@@ -329,13 +367,7 @@ export async function usersRoutes(app: FastifyInstance) {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      // TODO: Implement - get all tags this user has applied
-      return {
-        address,
-        tags: [],
-        tagCounts: {},
-        taggedAddresses: {},
-      };
+      return await getUserTags(address);
     }
   );
 
@@ -346,13 +378,7 @@ export async function usersRoutes(app: FastifyInstance) {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      // TODO: Implement - find what tags others have assigned to this user
-      return {
-        address,
-        tags: [],
-        tagCounts: {},
-        taggedAddresses: {},
-      };
+      return await getUserTaggedAs(address);
     }
   );
 
@@ -363,8 +389,8 @@ export async function usersRoutes(app: FastifyInstance) {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      // TODO: Implement POAP badges lookup
-      return { poaps: [] };
+      const poaps = await getPOAPBadges(address);
+      return { poaps };
     }
   );
 
@@ -380,18 +406,12 @@ export async function usersRoutes(app: FastifyInstance) {
         return reply.status(400).send({ response: 'Invalid target address' });
       }
 
-      // TODO: Implement relationship lookup
+      const state = await getRelationship(address, targetAddress);
+
       return {
         source: address,
         target: targetAddress,
-        state: {
-          is_following: false,
-          is_followed_by: false,
-          is_blocked: false,
-          is_blocked_by: false,
-          is_muted: false,
-          is_muted_by: false,
-        },
+        state,
       };
     }
   );
