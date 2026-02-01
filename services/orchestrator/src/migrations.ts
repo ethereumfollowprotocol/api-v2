@@ -127,6 +127,7 @@ const MIGRATIONS = [
           r.record_type = 1
           AND l."user" IS NOT NULL
           AND l."user" != ''
+          AND length(convert_from(r.record_data, 'UTF8')) = 42
       ON CONFLICT (address, follower_address) DO UPDATE SET
           follower_list_id = EXCLUDED.follower_list_id,
           is_blocked = EXCLUDED.is_blocked,
@@ -195,6 +196,7 @@ const MIGRATIONS = [
           r.record_type = 1
           AND l."user" IS NOT NULL
           AND l."user" != ''
+          AND length(convert_from(r.record_data, 'UTF8')) = 42
       ON CONFLICT (address, following_address) DO UPDATE SET
           list_id = EXCLUDED.list_id,
           is_blocked = EXCLUDED.is_blocked,

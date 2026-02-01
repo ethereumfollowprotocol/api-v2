@@ -257,10 +257,22 @@ function parseRecord(data: `0x${string}`): {
   if (!data || data.length < 6) return null;
 
   const bytes = data.slice(2);
+  const version = parseInt(bytes.slice(0, 2), 16);
+  const recordType = parseInt(bytes.slice(2, 4), 16);
+
+  // For address records (type 1), only take 20 bytes (40 hex chars)
+  // This handles cases where users put extra junk data onchain
+  let recordData: string;
+  if (recordType === 1) {
+    recordData = bytes.slice(4, 44); // 40 hex chars = 20 bytes for address
+  } else {
+    recordData = bytes.slice(4);
+  }
+
   return {
-    version: parseInt(bytes.slice(0, 2), 16),
-    recordType: parseInt(bytes.slice(2, 4), 16),
-    recordData: ('0x' + bytes.slice(4)) as `0x${string}`,
+    version,
+    recordType,
+    recordData: ('0x' + recordData) as `0x${string}`,
   };
 }
 
