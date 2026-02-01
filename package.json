@@ -19,6 +19,7 @@
     "start:workers": "dotenv -- node services/workers/dist/index.js",
     "start:indexer": "dotenv -- node services/indexer/dist/index.js",
     "seed-ens": "dotenv -- node services/indexer/dist/scripts/seed-ens-jobs.js",
+    "seed-ens:force": "dotenv -- node services/indexer/dist/scripts/seed-ens-jobs.js --force",
     "test": "vitest run",
     "test:watch": "vitest watch",
     "test:comparison": "vitest run --config vitest.comparison.config.ts",

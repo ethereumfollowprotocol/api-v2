@@ -61,24 +61,52 @@ export async function handleSyncENSMetadata(
       return;
     }
 
-    // Get avatar and other text records
-    const [avatar, header, description, twitter, github, url] = await Promise.all([
-      client.getEnsAvatar({ name: normalize(name) }).catch(() => null),
-      client.getEnsText({ name: normalize(name), key: 'header' }).catch(() => null),
-      client.getEnsText({ name: normalize(name), key: 'description' }).catch(() => null),
-      client.getEnsText({ name: normalize(name), key: 'com.twitter' }).catch(() => null),
-      client.getEnsText({ name: normalize(name), key: 'com.github' }).catch(() => null),
-      client.getEnsText({ name: normalize(name), key: 'url' }).catch(() => null),
+    // All ENS text record keys to fetch
+    const textRecordKeys = [
+      'url',
+      'name',
+      'mail',
+      'email',
+      'header',
+      'display',
+      'location',
+      'status',
+      'timezone',
+      'language',
+      'com.github',
+      'org.matrix',
+      'io.keybase',
+      'description',
+      'com.twitter',
+      'com.discord',
+      'social.bsky',
+      'org.telegram',
+      'social.mastodon',
+      'network.dm3.profile',
+      'network.dm3.deliveryService',
+    ];
+
+    // Fetch avatar and all text records in parallel
+    const normalizedName = normalize(name);
+    const [avatar, ...textRecordValues] = await Promise.all([
+      client.getEnsAvatar({ name: normalizedName }).catch(() => null),
+      ...textRecordKeys.map((key) =>
+        client.getEnsText({ name: normalizedName, key }).catch(() => null)
+      ),
     ]);
 
     // Build records object
     const records: Record<string, string> = {};
     if (avatar) records.avatar = avatar;
-    if (header) records.header = header;
-    if (description) records.description = description;
-    if (twitter) records['com.twitter'] = twitter;
-    if (github) records['com.github'] = github;
-    if (url) records.url = url;
+
+    // Add all text records that have values
+    textRecordKeys.forEach((key, index) => {
+      const value = textRecordValues[index];
+      if (value) records[key] = value;
+    });
+
+    // Extract header from records for the dedicated column
+    const header = records.header || null;
 
     // Store in database
     await query(

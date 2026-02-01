@@ -4,6 +4,12 @@ import { getPool, closePool, createLogger, env } from '@efp/shared';
 const logger = createLogger('seed-ens-jobs');
 
 async function main() {
+  const force = process.argv.includes('--force');
+
+  if (force) {
+    logger.info('Force mode enabled - will re-sync all users');
+  }
+
   const pool = getPool();
 
   // Initialize pg-boss
@@ -11,16 +17,19 @@ async function main() {
   await boss.start();
 
   try {
-    // Find all users in efp_user_stats that don't have ENS metadata
-    const result = await pool.query<{ address: string }>(`
-      SELECT us.address
-      FROM efp_user_stats us
-      LEFT JOIN ens_metadata em ON em.address = us.address
-      WHERE em.address IS NULL
-      ORDER BY us.followers_count DESC NULLS LAST
-    `);
+    // Find users to sync
+    // If force mode, get all users; otherwise only those without ENS data
+    const result = await pool.query<{ address: string }>(
+      force
+        ? `SELECT address FROM efp_user_stats ORDER BY followers_count DESC NULLS LAST`
+        : `SELECT us.address
+           FROM efp_user_stats us
+           LEFT JOIN ens_metadata em ON em.address = us.address
+           WHERE em.address IS NULL
+           ORDER BY us.followers_count DESC NULLS LAST`
+    );
 
-    logger.info({ count: result.rows.length }, 'Found users without ENS data');
+    logger.info({ count: result.rows.length, force }, 'Found users to sync');
 
     // Queue ENS sync jobs in batches
     const batchSize = 100;
@@ -32,8 +41,8 @@ async function main() {
       for (const row of batch) {
         await boss.send(
           'sync-ens-metadata',
-          { address: row.address },
-          { singletonKey: `ens:${row.address}`, singletonSeconds: 3600 }
+          { address: row.address, force },
+          { singletonKey: `ens:${row.address}`, singletonSeconds: force ? 1 : 3600 }
         );
         queued++;
       }
