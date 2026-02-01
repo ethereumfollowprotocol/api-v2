@@ -6,10 +6,12 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "seed-ens": "node dist/scripts/seed-ens-jobs.js"
   },
   "dependencies": {
     "@efp/shared": "*",
+    "pg-boss": "^9.0.3",
     "viem": "^2.7.0"
   },
   "devDependencies": {
