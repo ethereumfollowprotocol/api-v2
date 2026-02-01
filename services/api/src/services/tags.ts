@@ -49,7 +49,7 @@ export async function getUserTags(address: Address): Promise<TagsResponse> {
   // Get all tags and addresses
   const result = await query<{ tag: string; record_data: string }>(
     `
-    SELECT t.tag, r.record_data
+    SELECT t.tag, '0x' || encode(r.record_data, 'hex') as record_data
     FROM efp_list_record_tags t
     JOIN efp_list_records r ON
       r.chain_id = t.chain_id AND
@@ -141,7 +141,7 @@ export async function getListTags(tokenId: string): Promise<TagsResponse> {
   // Get all tags with their addresses
   const result = await query<{ tag: string; record_data: string }>(
     `
-    SELECT t.tag, r.record_data
+    SELECT t.tag, '0x' || encode(r.record_data, 'hex') as record_data
     FROM efp_list_record_tags t
     JOIN efp_list_records r ON
       r.chain_id = t.chain_id AND

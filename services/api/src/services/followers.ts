@@ -407,7 +407,7 @@ export async function getFollowerState(
       t.slot = r.slot AND
       t.record = r.record
     WHERE r.chain_id = $1 AND r.contract_address = $2 AND r.slot = $3
-      AND LOWER(r.record_data) = LOWER($4)
+      AND LOWER('0x' || encode(r.record_data, 'hex')) = LOWER($4)
     GROUP BY r.record_data
     `,
     [list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot, targetAddress]
