@@ -34,8 +34,8 @@ BEGIN
         ELSE hex_string
     END;
 
-    -- Convert to bigint
-    RETURN ('x' || lpad(clean_hex, 16, '0'))::bit(64)::bigint;
+    -- Take rightmost 16 hex chars (fits in bigint) and convert
+    RETURN ('x' || lpad(right(clean_hex, 16), 16, '0'))::bit(64)::bigint;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
