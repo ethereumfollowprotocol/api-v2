@@ -76,6 +76,7 @@ export async function handleResyncUserRelationships(
             AND r.contract_address = $3
             AND r.slot = $5
             AND r.record_type = 1
+            AND length(convert_from(r.record_data, 'UTF8')) = 42
           ON CONFLICT (address, follower_address) DO UPDATE SET
             follower_list_id = EXCLUDED.follower_list_id,
             is_blocked = EXCLUDED.is_blocked,
@@ -102,6 +103,7 @@ export async function handleResyncUserRelationships(
             AND r.contract_address = $3
             AND r.slot = $5
             AND r.record_type = 1
+            AND length(convert_from(r.record_data, 'UTF8')) = 42
           ON CONFLICT (address, following_address) DO UPDATE SET
             list_id = EXCLUDED.list_id,
             is_blocked = EXCLUDED.is_blocked,

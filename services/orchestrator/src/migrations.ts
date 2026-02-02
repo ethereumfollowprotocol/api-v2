@@ -406,6 +406,48 @@ const MIGRATIONS = [
           FOR EACH ROW EXECUTE FUNCTION notify_efp_change();
     `,
   },
+  {
+    name: '008_fix_ens_metadata_notify',
+    sql: `
+      -- Create a separate notify function for ens_metadata that excludes the large 'records' field
+      -- This prevents pg_notify from failing with "payload string too long" error
+      CREATE OR REPLACE FUNCTION notify_ens_metadata_change()
+      RETURNS TRIGGER AS $$
+      BEGIN
+          PERFORM pg_notify(
+              'efp_changes',
+              json_build_object(
+                  'table', TG_TABLE_NAME,
+                  'operation', TG_OP,
+                  'data', CASE
+                      WHEN TG_OP = 'DELETE' THEN json_build_object(
+                          'address', OLD.address,
+                          'name', OLD.name,
+                          'avatar', OLD.avatar,
+                          'header', OLD.header,
+                          'resolved_at', OLD.resolved_at
+                      )
+                      ELSE json_build_object(
+                          'address', NEW.address,
+                          'name', NEW.name,
+                          'avatar', NEW.avatar,
+                          'header', NEW.header,
+                          'resolved_at', NEW.resolved_at
+                      )
+                  END
+              )::text
+          );
+          RETURN COALESCE(NEW, OLD);
+      END;
+      $$ LANGUAGE plpgsql;
+
+      -- Replace the trigger to use the new function
+      DROP TRIGGER IF EXISTS ens_metadata_notify ON ens_metadata;
+      CREATE TRIGGER ens_metadata_notify
+          AFTER INSERT OR UPDATE OR DELETE ON ens_metadata
+          FOR EACH ROW EXECUTE FUNCTION notify_ens_metadata_change();
+    `,
+  },
 ];
 
 export async function runMigrations(): Promise<void> {
