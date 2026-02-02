@@ -409,8 +409,9 @@ const MIGRATIONS = [
   {
     name: '008_fix_ens_metadata_notify',
     sql: `
-      -- Create a separate notify function for ens_metadata that excludes the large 'records' field
-      -- This prevents pg_notify from failing with "payload string too long" error
+      -- Create a separate notify function for ens_metadata that only sends the address
+      -- Avatar/header can be data URIs which exceed pg_notify's 8KB limit
+      -- The handler will fetch full data from the database
       CREATE OR REPLACE FUNCTION notify_ens_metadata_change()
       RETURNS TRIGGER AS $$
       BEGIN
@@ -419,22 +420,9 @@ const MIGRATIONS = [
               json_build_object(
                   'table', TG_TABLE_NAME,
                   'operation', TG_OP,
-                  'data', CASE
-                      WHEN TG_OP = 'DELETE' THEN json_build_object(
-                          'address', OLD.address,
-                          'name', OLD.name,
-                          'avatar', OLD.avatar,
-                          'header', OLD.header,
-                          'resolved_at', OLD.resolved_at
-                      )
-                      ELSE json_build_object(
-                          'address', NEW.address,
-                          'name', NEW.name,
-                          'avatar', NEW.avatar,
-                          'header', NEW.header,
-                          'resolved_at', NEW.resolved_at
-                      )
-                  END
+                  'data', json_build_object(
+                      'address', CASE WHEN TG_OP = 'DELETE' THEN OLD.address ELSE NEW.address END
+                  )
               )::text
           );
           RETURN COALESCE(NEW, OLD);
