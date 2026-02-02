@@ -12,6 +12,12 @@ export async function handleUpdateUserStats(
 ): Promise<void> {
   const { address } = job.data;
 
+  // Validate address length before processing
+  if (!address || address.length !== 42) {
+    logger.warn({ address, length: address?.length }, 'Skipping invalid address');
+    return;
+  }
+
   logger.debug({ address }, 'Updating user stats');
 
   // Calculate all stats in a single query

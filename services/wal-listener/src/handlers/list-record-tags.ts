@@ -38,6 +38,12 @@ export async function handleListRecordTagsChange(
     '0x' + recordResult.rows[0].record_data.toString('hex')
   ).toLowerCase() as Address;
 
+  // Validate address length (must be exactly 42 chars: 0x + 40 hex)
+  if (followedAddress.length !== 42) {
+    logger.debug({ address: followedAddress, length: followedAddress.length }, 'Skipping invalid address length');
+    return;
+  }
+
   // Find the list and follower
   const listResult = await query<{ user: string }>(
     `

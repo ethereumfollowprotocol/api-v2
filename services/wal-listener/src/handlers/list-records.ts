@@ -32,6 +32,12 @@ export async function handleListRecordsChange(
     : Buffer.from(record.record_data as string, 'hex');
   const followedAddress = ('0x' + recordData.toString('hex')).toLowerCase() as Address;
 
+  // Validate address length (must be exactly 42 chars: 0x + 40 hex)
+  if (followedAddress.length !== 42) {
+    logger.debug({ address: followedAddress, length: followedAddress.length }, 'Skipping invalid address length');
+    return;
+  }
+
   // Find the list this record belongs to
   const listResult = await query<{
     token_id: string;
