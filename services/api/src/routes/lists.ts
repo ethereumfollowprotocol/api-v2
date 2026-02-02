@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { query, convertHexToBigInt, toStringOrNull, type Address, createLogger } from '@efp/shared';
-import { getENSProfile } from '../services/ens.js';
+import { getENSProfile, getENSProfiles } from '../services/ens.js';
 import { getFollowers, getFollowing, getListFollowerState, getListFollowingState, searchFollowers, searchFollowing } from '../services/followers.js';
 import { getListTags, getListTaggedAs } from '../services/tags.js';
 import { getRecommendations, getRecommendationsWithDetails } from '../services/recommendations.js';
@@ -223,6 +223,7 @@ export async function listsRoutes(app: FastifyInstance) {
 
   // GET /lists/:tokenId/allFollowers (P1)
   // Returns all followers, but respects limit/offset if provided
+  // NOTE: Old API uses 2-option sort (latest=DESC, else=ASC), not 3-option like other endpoints
   app.get<{ Params: TokenParams; Querystring: PaginationQuery }>(
     '/lists/:tokenId/allFollowers',
     async (request, reply) => {
@@ -238,14 +239,74 @@ export async function listsRoutes(app: FastifyInstance) {
 
       // If limit is provided, use it; otherwise return all (up to 10000)
       const effectiveLimit = limit ? Math.min(parseInt(limit, 10) || 10000, 10000) : 10000;
+      const effectiveOffset = parseInt(offset, 10) || 0;
 
-      const followers = await getFollowers(address, {
-        limit: effectiveLimit,
-        offset: parseInt(offset, 10) || 0,
-        sort: sort as 'latest' | 'followers' | 'earliest',
-        tags: tags?.split(',').filter(Boolean),
-        includeENS: include?.includes('ens'),
-      });
+      // Old API uses 2-option sort: latest=DESC, anything else=ASC
+      const sortDirection = sort === 'latest' ? 'DESC' : 'ASC';
+
+      let tagFilter = '';
+      const params: unknown[] = [address, effectiveLimit, effectiveOffset];
+
+      if (tags) {
+        const tagList = tags.split(',').filter(Boolean);
+        if (tagList.length > 0) {
+          tagFilter = 'AND f.tags && $4';
+          params.push(tagList);
+        }
+      }
+
+      const result = await query<{
+        follower_address: string;
+        follower_list_id: string;
+        tags: string[];
+        is_blocked: boolean;
+        is_muted: boolean;
+        updated_at: Date;
+        is_following: boolean;
+      }>(
+        `
+        SELECT
+          f.follower_address,
+          f.follower_list_id::TEXT,
+          f.tags,
+          f.is_blocked,
+          f.is_muted,
+          f.updated_at,
+          EXISTS (
+            SELECT 1 FROM efp_following fw
+            WHERE fw.address = $1 AND fw.following_address = f.follower_address
+              AND fw.is_blocked = FALSE AND fw.is_muted = FALSE
+          ) as is_following
+        FROM efp_followers f
+        WHERE f.address = $1 ${tagFilter}
+        ORDER BY f.updated_at ${sortDirection}
+        LIMIT $2 OFFSET $3
+        `,
+        params
+      );
+
+      const followers = result.rows.map((row) => ({
+        efp_list_nft_token_id: row.follower_list_id,
+        address: row.follower_address.toLowerCase() as Address,
+        tags: row.tags || [],
+        is_following: row.is_following,
+        is_blocked: row.is_blocked,
+        is_muted: row.is_muted,
+        updated_at: row.updated_at.toISOString(),
+      }));
+
+      // Add ENS data if requested
+      if (include?.includes('ens') && followers.length > 0) {
+        const addresses = followers.map((f) => f.address);
+        const ensProfiles = await getENSProfiles(addresses);
+
+        for (const follower of followers) {
+          const profile = ensProfiles.get(follower.address);
+          if (profile) {
+            (follower as Record<string, unknown>).ens = profile;
+          }
+        }
+      }
 
       return { followers };
     }
@@ -253,6 +314,7 @@ export async function listsRoutes(app: FastifyInstance) {
 
   // GET /lists/:tokenId/allFollowing (P1)
   // Returns all following, but respects limit/offset if provided
+  // NOTE: Old API uses 2-option sort (latest=DESC, else=ASC), not 3-option like other endpoints
   app.get<{ Params: TokenParams; Querystring: PaginationQuery }>(
     '/lists/:tokenId/allFollowing',
     async (request, reply) => {
@@ -268,14 +330,61 @@ export async function listsRoutes(app: FastifyInstance) {
 
       // If limit is provided, use it; otherwise return all (up to 10000)
       const effectiveLimit = limit ? Math.min(parseInt(limit, 10) || 10000, 10000) : 10000;
+      const effectiveOffset = parseInt(offset, 10) || 0;
 
-      const following = await getFollowing(address, {
-        limit: effectiveLimit,
-        offset: parseInt(offset, 10) || 0,
-        sort: sort as 'latest' | 'followers' | 'earliest',
-        tags: tags?.split(',').filter(Boolean),
-        includeENS: include?.includes('ens'),
-      });
+      // Old API uses 2-option sort: latest=DESC, anything else=ASC
+      const sortDirection = sort === 'latest' ? 'DESC' : 'ASC';
+
+      let tagFilter = '';
+      const params: unknown[] = [address, effectiveLimit, effectiveOffset];
+
+      if (tags) {
+        const tagList = tags.split(',').filter(Boolean);
+        if (tagList.length > 0) {
+          tagFilter = 'AND f.tags && $4';
+          params.push(tagList);
+        }
+      }
+
+      const result = await query<{
+        following_address: string;
+        tags: string[];
+      }>(
+        `
+        SELECT
+          f.following_address,
+          f.tags
+        FROM efp_following f
+        WHERE f.address = $1
+          AND f.is_blocked = FALSE
+          AND f.is_muted = FALSE
+          ${tagFilter}
+        ORDER BY f.created_at ${sortDirection}
+        LIMIT $2 OFFSET $3
+        `,
+        params
+      );
+
+      const following = result.rows.map((row) => ({
+        version: 1,
+        record_type: 'address',
+        data: row.following_address.toLowerCase() as Address,
+        address: row.following_address.toLowerCase() as Address,
+        tags: row.tags || [],
+      }));
+
+      // Add ENS data if requested
+      if (include?.includes('ens') && following.length > 0) {
+        const addresses = following.map((f) => f.address);
+        const ensProfiles = await getENSProfiles(addresses);
+
+        for (const entry of following) {
+          const profile = ensProfiles.get(entry.address);
+          if (profile) {
+            (entry as Record<string, unknown>).ens = profile;
+          }
+        }
+      }
 
       return { following };
     }
