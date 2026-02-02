@@ -27,6 +27,9 @@ const envSchema = z.object({
   RATE_LIMIT_MAX: z.coerce.number().default(100),
   RATE_LIMIT_WINDOW: z.coerce.number().default(60000),
 
+  // ENS API
+  ENS_API_URL: z.string().url().default('https://ens.ethfollow.xyz'),
+
   // Phase Management
   SERVE_DURING_SYNC: z
     .string()

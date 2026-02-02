@@ -16,6 +16,8 @@ import { handleResyncUserRelationships } from './jobs/resync-user-relationships.
 import { handleEnsureUserStats } from './jobs/ensure-user-stats.js';
 import { handleBatchReconcileStats } from './jobs/batch-reconcile-stats.js';
 import { handleBatchRefreshENS } from './jobs/batch-refresh-ens.js';
+import { handleShuffleRecommended } from './jobs/shuffle-recommended.js';
+import { handleSeedRecommended } from './jobs/seed-recommended.js';
 
 const logger = createLogger('workers');
 
@@ -31,6 +33,8 @@ const jobConfigs: Record<string, Partial<PgBoss.WorkOptions>> = {
   'ensure-user-stats': { teamSize: 5, teamConcurrency: 5 },
   'batch-reconcile-stats': { teamSize: 1, teamConcurrency: 1 },
   'batch-refresh-ens': { teamSize: 1, teamConcurrency: 1 },
+  'shuffle-recommended': { teamSize: 1, teamConcurrency: 1 },
+  'seed-recommended': { teamSize: 1, teamConcurrency: 1 },
 };
 
 async function main() {
@@ -78,6 +82,8 @@ async function main() {
     ['ensure-user-stats', handleEnsureUserStats],
     ['batch-reconcile-stats', handleBatchReconcileStats],
     ['batch-refresh-ens', handleBatchRefreshENS],
+    ['shuffle-recommended', handleShuffleRecommended],
+    ['seed-recommended', handleSeedRecommended],
   ];
 
   for (const [jobName, handler] of handlers) {
@@ -90,6 +96,11 @@ async function main() {
   await boss.schedule('update-leaderboard-full', '*/5 * * * *'); // Every 5 minutes
   await boss.schedule('batch-reconcile-stats', '0 * * * *'); // Every hour
   await boss.schedule('batch-refresh-ens', '0 3 * * *'); // Daily at 3 AM
+  await boss.schedule('shuffle-recommended', '*/15 * * * *'); // Every 15 minutes
+
+  // Trigger seed-recommended once on startup (will skip if already populated)
+  await boss.send('seed-recommended', {}, { singletonKey: 'seed-recommended-startup' });
+  logger.info('Triggered seed-recommended job');
 
   logger.info('Workers ready');
 

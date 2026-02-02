@@ -315,3 +315,16 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Note: WAL notification triggers are created by migration script 007
+
+-- ============================================================
+-- RECOMMENDED ACCOUNTS (populated by services repo)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS efp_recommended (
+    index           INTEGER,
+    address         VARCHAR(42) PRIMARY KEY,
+    name            VARCHAR(255),
+    avatar          TEXT,
+    header          TEXT,
+    class           VARCHAR(1)  -- 'A', 'B', or 'C'
+);

@@ -137,7 +137,7 @@ const ENDPOINTS = [
   { path: `/lists/${TEST_TOKEN_ID}/${TEST_ADDRESS_2}/followerState`, name: 'List follower state' },
 
   // Lists - Button State
-  { path: `/lists/${TEST_TOKEN_ID}/buttonState`, name: 'List button state' },
+  { path: `/lists/${TEST_TOKEN_ID}/${TEST_ADDRESS_2}/buttonState`, name: 'List button state' },
 ];
 
 async function fetchWithTimeout(url, timeout = 30000) {

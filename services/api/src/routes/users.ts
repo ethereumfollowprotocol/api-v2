@@ -518,21 +518,21 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: { leader?: string; limit?: string; offset?: string } }>(
     '/users/:addressOrENS/commonFollowers',
     async (request, reply) => {
-      const { leader, limit = '20', offset = '0' } = request.query;
-
-      if (!leader) {
-        return reply.status(400).send({ message: '"leader" query parameter is required' });
-      }
+      const { leader, limit = '10', offset = '0' } = request.query;
 
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      const leaderAddress = await resolveAddressOrENS(leader);
+      // Leader is optional - fallback to the user's own address
+      const leaderAddress = leader
+        ? await resolveAddressOrENS(leader)
+        : address;
+
       if (!leaderAddress) {
-        return reply.status(400).send({ response: 'Invalid leader address' });
+        return reply.status(404).send({ response: 'ENS name not valid or does not exist' });
       }
 
-      const limitNum = Math.min(parseInt(limit, 10) || 20, 100);
+      const limitNum = Math.min(parseInt(limit, 10) || 10, 100);
       const offsetNum = parseInt(offset, 10) || 0;
 
       // Find users that both follow the leader and are followed by address
@@ -567,10 +567,10 @@ export async function usersRoutes(app: FastifyInstance) {
       return {
         results: result.rows.map((r) => ({
           address: r.address.toLowerCase(),
-          name: r.name || null,
-          avatar: r.avatar || null,
-          header: r.header || null,
-          mutuals_rank: r.mutuals_rank?.toString() || null,
+          name: r.name || '',
+          avatar: r.avatar || '',
+          header: r.header || '',
+          mutuals_rank: parseInt(String(r.mutuals_rank), 10) || 0,
         })),
         length: result.rows.length,
       };

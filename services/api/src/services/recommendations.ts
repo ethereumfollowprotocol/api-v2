@@ -4,12 +4,11 @@ import { getENSProfiles } from './ens.js';
 const logger = createLogger('recommendations-service');
 
 interface RecommendedUser {
-  name: string | null;
   address: string;
-  avatar: string | null;
-  header: string | null;
+  name: string;
+  avatar: string;
+  header: string | undefined;
   class: string;
-  created_at: string;
 }
 
 interface RecommendedUserDetails {
@@ -17,70 +16,51 @@ interface RecommendedUserDetails {
   ens: {
     name: string | null;
     avatar: string | null;
-    records: Record<string, string>;
+    records: string;  // JSON.stringify'd, NOT object
   };
   stats: {
-    followers_count: string;
-    following_count: string;
+    followers_count: number;  // NUMBER not string
+    following_count: number;  // NUMBER not string
   };
   ranks: {
-    mutuals_rank: string | null;
-    followers_rank: string | null;
-    following_rank: string | null;
-    top8_rank: string | null;
-    blocks_rank: string | null;
+    mutuals_rank: number;     // NUMBER not string
+    followers_rank: number;
+    following_rank: number;
+    top8_rank: number;
+    blocks_rank: number;
   };
 }
 
-// Get recommended users to follow (2nd degree connections)
+// Get recommended users from efp_recommended table (populated by services repo)
 export async function getRecommendations(
   address: Address,
   options: { limit: number; offset: number; seed?: number }
 ): Promise<RecommendedUser[]> {
-  const { limit, offset, seed } = options;
+  const { limit, offset } = options;
 
-  // Find users followed by people you follow, that you don't follow
-  // Rank by number of mutual connections (score)
+  // Read from efp_recommended table - shuffled ENS profiles populated by services repo
   const result = await query<{
     address: string;
-    score: string;
     name: string | null;
     avatar: string | null;
     header: string | null;
+    class: string | null;
   }>(
     `
-    WITH my_following AS (
-      SELECT following_address FROM efp_following
-      WHERE address = $1 AND is_blocked = FALSE AND is_muted = FALSE
-    ),
-    second_degree AS (
-      SELECT f2.following_address as address, COUNT(*)::INTEGER as score
-      FROM my_following mf
-      JOIN efp_following f2 ON f2.address = mf.following_address
-        AND f2.is_blocked = FALSE AND f2.is_muted = FALSE
-      WHERE f2.following_address != $1
-        AND f2.following_address NOT IN (SELECT following_address FROM my_following)
-      GROUP BY f2.following_address
-    )
-    SELECT sd.address, sd.score::TEXT,
-           em.name, em.avatar, em.header
-    FROM second_degree sd
-    LEFT JOIN ens_metadata em ON em.address = sd.address
-    ORDER BY sd.score DESC, sd.address
-    LIMIT $2 OFFSET $3
+    SELECT address, name, avatar, header, class
+    FROM efp_recommended
+    ORDER BY index
+    LIMIT $1 OFFSET $2
     `,
-    [address, limit, offset]
+    [limit, offset]
   );
 
-  const now = new Date().toISOString();
-
   return result.rows.map((row) => ({
-    name: row.name,
     address: row.address.toLowerCase(),
-    avatar: row.avatar,
-    header: row.header,
-    class: 'A', // Default class
-    created_at: now,
+    name: row.name || '',
+    avatar: row.avatar || '',
+    header: row.header || undefined,
+    class: row.class || 'A',
   }));
 }
 
@@ -91,10 +71,9 @@ export async function getRecommendationsWithDetails(
 ): Promise<RecommendedUserDetails[]> {
   const { limit, offset } = options;
 
-  // Same 2nd degree query but join with stats and ranks
+  // Read from efp_recommended and join with ENS, stats, and ranks
   const result = await query<{
     address: string;
-    score: string;
     name: string | null;
     avatar: string | null;
     records: Record<string, string> | null;
@@ -107,52 +86,39 @@ export async function getRecommendationsWithDetails(
     blocks_rank: number | null;
   }>(
     `
-    WITH my_following AS (
-      SELECT following_address FROM efp_following
-      WHERE address = $1 AND is_blocked = FALSE AND is_muted = FALSE
-    ),
-    second_degree AS (
-      SELECT f2.following_address as address, COUNT(*)::INTEGER as score
-      FROM my_following mf
-      JOIN efp_following f2 ON f2.address = mf.following_address
-        AND f2.is_blocked = FALSE AND f2.is_muted = FALSE
-      WHERE f2.following_address != $1
-        AND f2.following_address NOT IN (SELECT following_address FROM my_following)
-      GROUP BY f2.following_address
-    )
-    SELECT sd.address, sd.score::TEXT,
+    SELECT r.address,
            em.name, em.avatar, em.records,
            COALESCE(us.followers_count, 0) as followers_count,
            COALESCE(us.following_count, 0) as following_count,
            lb.mutuals_rank, lb.followers_rank, lb.following_rank,
            lb.top8_rank, lb.blocks_rank
-    FROM second_degree sd
-    LEFT JOIN ens_metadata em ON em.address = sd.address
-    LEFT JOIN efp_user_stats us ON us.address = sd.address
-    LEFT JOIN efp_leaderboard lb ON lb.address = sd.address
-    ORDER BY sd.score DESC, sd.address
-    LIMIT $2 OFFSET $3
+    FROM efp_recommended r
+    LEFT JOIN ens_metadata em ON em.address = r.address
+    LEFT JOIN efp_user_stats us ON us.address = r.address
+    LEFT JOIN efp_leaderboard lb ON lb.address = r.address
+    ORDER BY r.index
+    LIMIT $1 OFFSET $2
     `,
-    [address, limit, offset]
+    [limit, offset]
   );
 
   return result.rows.map((row) => ({
     address: row.address.toLowerCase(),
     ens: {
-      name: row.name,
-      avatar: row.avatar,
-      records: row.records || {},
+      name: row.name || null,
+      avatar: row.avatar || null,
+      records: JSON.stringify(row.records || {}),  // Must be stringified
     },
     stats: {
-      followers_count: String(row.followers_count),
-      following_count: String(row.following_count),
+      followers_count: parseInt(String(row.followers_count), 10) || 0,
+      following_count: parseInt(String(row.following_count), 10) || 0,
     },
     ranks: {
-      mutuals_rank: row.mutuals_rank ? String(row.mutuals_rank) : null,
-      followers_rank: row.followers_rank ? String(row.followers_rank) : null,
-      following_rank: row.following_rank ? String(row.following_rank) : null,
-      top8_rank: row.top8_rank ? String(row.top8_rank) : null,
-      blocks_rank: row.blocks_rank ? String(row.blocks_rank) : null,
+      mutuals_rank: parseInt(String(row.mutuals_rank), 10) || 0,
+      followers_rank: parseInt(String(row.followers_rank), 10) || 0,
+      following_rank: parseInt(String(row.following_rank), 10) || 0,
+      top8_rank: parseInt(String(row.top8_rank), 10) || 0,
+      blocks_rank: parseInt(String(row.blocks_rank), 10) || 0,
     },
   }));
 }
