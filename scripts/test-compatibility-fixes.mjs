@@ -286,10 +286,12 @@ async function testTokenImageSVG(config) {
   // Check SVG content
   const svg = newRes.raw || '';
 
-  if (svg.includes('Ethereum Follow Protocol') || svg.includes('EFP')) {
-    pass('Contains EFP branding');
+  // The EFP branding is rendered as SVG paths, not text strings
+  // Check for the gradient IDs that are part of the EFP logo
+  if (svg.includes('paint0_linear_715_37') && svg.includes('filter0_d_715_37')) {
+    pass('Contains EFP branding (gradient IDs match)');
   } else {
-    fail('Missing EFP branding in SVG');
+    fail('Missing EFP branding in SVG (gradient IDs not found)');
     return false;
   }
 
