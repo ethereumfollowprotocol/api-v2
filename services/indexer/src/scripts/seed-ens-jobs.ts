@@ -18,14 +18,14 @@ async function main() {
 
   try {
     // Find users to sync
-    // If force mode, get all users; otherwise only those without ENS data
+    // If force mode, get all users; otherwise only those without ENS data (or with empty name)
     const result = await pool.query<{ address: string }>(
       force
         ? `SELECT address FROM efp_user_stats ORDER BY followers_count DESC NULLS LAST`
         : `SELECT us.address
            FROM efp_user_stats us
            LEFT JOIN ens_metadata em ON em.address = us.address
-           WHERE em.address IS NULL
+           WHERE em.address IS NULL OR em.name IS NULL OR em.name = ''
            ORDER BY us.followers_count DESC NULLS LAST`
     );
 

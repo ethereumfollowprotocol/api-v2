@@ -22,13 +22,14 @@ export async function handleSyncENSMetadata(
 ): Promise<void> {
   const { address, force } = job.data;
 
-  // Check if we have recent data (skip if fresh and not forced)
+  // Check if we have recent data (skip if fresh with actual name and not forced)
   if (!force) {
     const existing = await query<{ updated_at: Date }>(
       `
       SELECT updated_at FROM ens_metadata
       WHERE address = $1
         AND updated_at > NOW() - INTERVAL '24 hours'
+        AND name IS NOT NULL AND name != ''
     `,
       [address]
     );

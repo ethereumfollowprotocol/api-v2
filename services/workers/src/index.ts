@@ -27,7 +27,7 @@ const jobConfigs: Record<string, Partial<PgBoss.WorkOptions>> = {
   'calculate-mutuals': { teamSize: 3, teamConcurrency: 3 },
   'update-leaderboard-entry': { teamSize: 2, teamConcurrency: 2 },
   'update-leaderboard-full': { teamSize: 1, teamConcurrency: 1 },
-  'sync-ens-metadata': { teamSize: 2, teamConcurrency: 2 },
+  'sync-ens-metadata': { teamSize: 10, teamConcurrency: 10 },
   'sync-user-to-elasticsearch': { teamSize: 3, teamConcurrency: 3 },
   'resync-user-relationships': { teamSize: 1, teamConcurrency: 1 },
   'ensure-user-stats': { teamSize: 5, teamConcurrency: 5 },
