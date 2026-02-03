@@ -25,7 +25,7 @@ const logger = createLogger('indexer');
 // Configuration
 const POLL_INTERVAL = 2000; // 2 seconds
 const BATCH_SIZE = 5000; // blocks per batch (increased for faster catchup)
-const CONFIRMATIONS = 2; // wait for confirmations
+const CONFIRMATIONS = 0; // no confirmation wait needed
 
 // Create clients for each chain
 const baseClient = createPublicClient({
