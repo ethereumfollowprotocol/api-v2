@@ -1,8 +1,10 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { createLogger, query, convertHexToBigInt, type Address } from '@efp/shared';
-import { resolveAddressOrENS, isENSName } from '../services/address.js';
+import { isAddress } from 'viem';
+import qrcode from 'qr-image';
+import { resolveAddressOrENS, isENSName, normalizeAddress } from '../services/address.js';
 import { getUserAccount, getUserDetails, getUserStats, getUserLists } from '../services/users.js';
-import { getENSProfiles } from '../services/ens.js';
+import { getENSProfile, getENSProfiles } from '../services/ens.js';
 import {
   getFollowers,
   getFollowing,
@@ -19,6 +21,40 @@ import { getRecommendations, getRecommendationsWithDetails } from '../services/r
 import { getPOAPBadges } from '../services/poap.js';
 
 const logger = createLogger('users-routes');
+
+// QR code SVG elements for EFP branding
+const efplogoSVG = `
+<rect width="12" height="12" rx="2" x="14" y="14" fill="#333333" />
+<rect width="10" height="10" rx="2" x="15" y="15" fill="url(#grad-logo)" />
+<rect width="10" height="10" rx="2" x="15" y="15" fill="white" fill-opacity="0.5" />
+<path d="M3.62302 5.58664L5.4049995 2.4337845L7.398153 5.58664L5.4049995 6.73439175L3.62302 5.58664Z" fill="url(#paint1_linear_564_124)" transform="translate(14.5, 14.5)"/>
+<path d="M3.62302 5.58664L5.4049995 2.4337845L7.398153 5.58664L5.4049995 6.73439175L3.62302 5.58664Z" fill="#333333" transform="translate(14.5, 14.5)"/>
+<path d="M5.4049995 7.08007725L3.62302 5.932326L5.4049995 8.6012145L7.398153 5.932326L5.4049995 7.08007725Z" fill="url(#paint2_linear_564_124)" transform="translate(14.5, 14.5)"/>
+<path d="M5.4049995 7.08007725L3.62302 5.932326L5.4049995 8.6012145L7.398153 5.932326L5.4049995 7.08007725Z" fill="#333333" transform="translate(14.5, 14.5)"/>
+<path d="M7.9374555 7.49682225H7.398153V8.223864H6.651423H6.651423V8.7312105H7.398153V9.62638425H7.9374555V8.7312105H8.833887V8.223864H7.9374555V7.49682225Z" fill="url(#paint3_linear_564_124)" transform="translate(14.5, 14.5)"/>
+<path d="M7.9374555 7.49682225H7.398153V8.223864H6.651423H6.651423V8.7312105H7.398153V9.62638425H7.9374555V8.7312105H8.833887V8.223864H7.9374555V7.49682225Z" fill="#333333" transform="translate(14.5, 14.5)"/>
+`;
+
+function getGradientText(nameOrAddress: string): string {
+  const displayText = isAddress(nameOrAddress)
+    ? `${nameOrAddress.slice(0, 6)}…${nameOrAddress.slice(38, 42)}`
+    : nameOrAddress.length > 18
+      ? `${nameOrAddress.slice(0, 18)}…`
+      : nameOrAddress;
+  return `<text width="100" height="5" y="41" x="50%" fill="#eeeeee">${displayText}</text>`;
+}
+
+async function getProfileImage(ensAvatar: string): Promise<string> {
+  try {
+    const res = await fetch(ensAvatar);
+    if (!res.ok) {
+      return '';
+    }
+    return `<rect x="14.5" y="14.5" width="11" height="11" rx="2" fill="#333333" /><image width="10" height="10" x="15" rx="1" y="15" href="${ensAvatar}" /><rect x="14.5" y="14.5" width="11" height="11" rx="2" fill="transparent" stroke="#333333" stroke-width="1" />`;
+  } catch {
+    return '';
+  }
+}
 
 interface AddressParams {
   addressOrENS: string;
@@ -55,6 +91,47 @@ async function resolveAddress(
 }
 
 export async function usersRoutes(app: FastifyInstance) {
+  // POST /users/ens/avatar/batch - must be registered BEFORE parameterized routes
+  app.post<{ Body: string[] }>(
+    '/users/ens/avatar/batch',
+    async (request, reply) => {
+      const input = request.body;
+
+      if (!Array.isArray(input)) {
+        return reply.status(400).send({ response: 'Invalid input: expected array' });
+      }
+
+      // Resolve all addresses
+      const addressMap = new Map<string, Address>();
+      for (const item of input) {
+        if (isAddress(item)) {
+          addressMap.set(item, item.toLowerCase() as Address);
+        } else {
+          const resolved = await resolveAddressOrENS(item);
+          if (resolved) {
+            addressMap.set(item, resolved);
+          }
+        }
+      }
+
+      // Get ENS profiles for all resolved addresses
+      const addresses = Array.from(new Set(addressMap.values()));
+      const profiles = await getENSProfiles(addresses);
+
+      // Build result object mapping input -> avatar URL
+      const result: Record<string, string> = {};
+      for (const item of input) {
+        const address = addressMap.get(item);
+        if (address) {
+          const profile = profiles.get(address);
+          result[item] = profile?.avatar || '';
+        }
+      }
+
+      return result;
+    }
+  );
+
   // GET /users/:addressOrENS/account (P0)
   app.get<{ Params: AddressParams }>(
     '/users/:addressOrENS/account',
@@ -210,6 +287,23 @@ export async function usersRoutes(app: FastifyInstance) {
           updated_at: account.ens?.updated_at || new Date().toISOString(),
         },
       };
+    }
+  );
+
+  // GET /users/:addressOrENS/ens/avatar - redirect to avatar URL
+  app.get<{ Params: AddressParams }>(
+    '/users/:addressOrENS/ens/avatar',
+    async (request, reply) => {
+      const address = await resolveAddress(request.params.addressOrENS, reply);
+      if (!address) return;
+
+      const profile = await getENSProfile(address);
+      if (profile?.avatar) {
+        return reply.redirect(302, profile.avatar);
+      }
+
+      // No avatar found - return 404
+      return reply.status(404).send({ response: 'No avatar found' });
     }
   );
 
@@ -707,6 +801,120 @@ export async function usersRoutes(app: FastifyInstance) {
     '/users/:addressOrENS/mutes',
     async (request, reply: FastifyReply) => {
       reply.status(501).type('text/plain').send('Not implemented');
+    }
+  );
+
+  // GET /users/:addressOrENS/qr - QR code with EFP branding
+  app.get<{ Params: AddressParams }>(
+    '/users/:addressOrENS/qr',
+    async (request, reply) => {
+      const { addressOrENS } = request.params;
+
+      let address: Address;
+      let ensName: string | null = null;
+      let ensAvatar: string | undefined;
+
+      if (isAddress(addressOrENS)) {
+        address = addressOrENS.toLowerCase() as Address;
+        const profile = await getENSProfile(address);
+        ensName = profile?.name || null;
+        ensAvatar = profile?.avatar || undefined;
+      } else {
+        const resolved = await resolveAddressOrENS(addressOrENS);
+        if (!resolved) {
+          return reply.status(404).send({ response: 'ENS name not valid or does not exist' });
+        }
+        address = resolved;
+        ensName = addressOrENS;
+        const profile = await getENSProfile(address);
+        ensAvatar = profile?.avatar || undefined;
+      }
+
+      const profileImageSVG = ensAvatar ? await getProfileImage(ensAvatar) : '';
+
+      let image = qrcode.imageSync(`https://ethfollow.xyz/${address}`, { type: 'svg' }).toString('utf-8');
+      image = image
+        .replace(
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 39 39">',
+          `<svg xmlns="http://www.w3.org/2000/svg" height="100%" width="100%" viewBox="0 0 39 44">
+          <defs>
+            <linearGradient id="grad1" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" style="stop-color:#FFE067;stop-opacity:1" />
+                <stop offset="80%" style="stop-color:#FFF7D9;stop-opacity:1" />
+            </linearGradient>
+            <linearGradient id="grad-logo" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" style="stop-color:#FFE067;stop-opacity:1" />
+              <stop offset="80%" style="stop-color:#FFF7D9;stop-opacity:1" />
+            </linearGradient>
+          </defs>
+          <style>
+            text {
+              font-family: sans-serif;
+              font-size: 3.5px;
+              font-weight: bold;
+              text-anchor: middle;
+              dominant-baseline: middle;
+            }
+          </style>
+        <rect width="100%" height="100%" fill="#333333"/>`
+        )
+        .replace(/<path/g, '<path fill="url(#grad1)" ');
+
+      const svgWithLogo = image.replace(
+        '</svg>',
+        `${efplogoSVG}${profileImageSVG}${getGradientText(ensName || address)}</svg>`
+      );
+
+      reply.type('image/svg+xml;charset=utf-8').send(svgWithLogo);
+    }
+  );
+
+  // GET /users/:addressOrENS/poap - POAP claim link
+  app.get<{ Params: AddressParams }>(
+    '/users/:addressOrENS/poap',
+    async (request, reply) => {
+      const address = await resolveAddress(request.params.addressOrENS, reply);
+      if (!address) return;
+
+      // Check if user has an existing claim
+      const existingResult = await query<{ link: string }>(
+        `SELECT link FROM efp_poap_links WHERE claimant = $1 LIMIT 1`,
+        [address]
+      );
+      if (existingResult.rows.length > 0) {
+        return { link: existingResult.rows[0].link };
+      }
+
+      // Get an unclaimed link
+      const unclaimedResult = await query<{ link: string }>(
+        `SELECT link FROM efp_poap_links WHERE claimed = false LIMIT 1`,
+        []
+      );
+      if (unclaimedResult.rows.length === 0) {
+        return { link: '' };
+      }
+
+      const link = unclaimedResult.rows[0].link;
+
+      // Claim the link
+      await query(
+        `UPDATE efp_poap_links SET claimant = $1, claimed = true WHERE link = $2`,
+        [address, link]
+      );
+
+      return { link };
+    }
+  );
+
+  // GET /users/:addressOrENS - Base path returns 501 with available subpaths
+  // MUST be registered LAST to avoid catching other routes
+  app.get<{ Params: AddressParams }>(
+    '/users/:addressOrENS',
+    async (request, reply) => {
+      return reply.status(501).send({
+        message:
+          'Not a valid endpoint. Available subpaths: /account, /allFollowers, /commonFollowers, /allFollowing, /details, /ens, /followers, /followerState, /following, /lists, /poap, /primary-list, /profile, /qr, /recommended, /relationships, /searchFollowers, /searchFollowing, /stats, /taggedAs, /tags',
+      });
     }
   );
 }

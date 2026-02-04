@@ -7,6 +7,11 @@ export async function healthRoutes(app: FastifyInstance) {
     return { status: 'ok', timestamp: new Date().toISOString() };
   });
 
+  // Docs redirect
+  app.get('/docs', async (request, reply) => {
+    return reply.redirect(301, 'https://docs.ethfollow.xyz/api');
+  });
+
   // Database health check - returns plain text "ok" to match production
   app.get('/database/health', async (request, reply: FastifyReply) => {
     try {

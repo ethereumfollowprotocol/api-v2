@@ -8,6 +8,16 @@ interface TokenParams {
 }
 
 export async function tokenRoutes(app: FastifyInstance) {
+  // GET /token/:tokenId - Base path returns 501 with available subpaths
+  app.get<{ Params: TokenParams }>(
+    '/token/:tokenId',
+    async (request, reply) => {
+      return reply.status(501).send({
+        message: 'Not a valid endpoint. Available subpaths: /image, /metadata',
+      });
+    }
+  );
+
   // GET /token/metadata/:tokenId (P2)
   // NFT metadata for token - follows ERC-721 metadata standard
   app.get<{ Params: TokenParams }>(
