@@ -19,6 +19,7 @@ import {
 import { getUserTags, getUserTaggedAs } from '../services/tags.js';
 import { getRecommendations, getRecommendationsWithDetails } from '../services/recommendations.js';
 import { getPOAPBadges } from '../services/poap.js';
+import { getNotifications } from '../services/notifications.js';
 
 const logger = createLogger('users-routes');
 
@@ -742,49 +743,47 @@ export async function usersRoutes(app: FastifyInstance) {
 
   // GET /users/:addressOrENS/notifications (P3)
   // Response: { summary: {...}, notifications: [...] }
-  app.get<{ Params: AddressParams; Querystring: { limit?: string; offset?: string; interval?: string } }>(
-    '/users/:addressOrENS/notifications',
-    async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
-      if (!address) return;
+  app.get<{
+    Params: AddressParams;
+    Querystring: {
+      limit?: string;
+      offset?: string;
+      interval?: string;
+      opcode?: string;
+      tag?: string;
+    };
+  }>('/users/:addressOrENS/notifications', async (request, reply) => {
+    const address = await resolveAddress(request.params.addressOrENS, reply);
+    if (!address) return;
 
-      const { limit = '50', offset = '0', interval = '168:00:00' } = request.query;
-      const limitNum = Math.min(parseInt(limit, 10) || 50, 100);
-      const offsetNum = parseInt(offset, 10) || 0;
+    const {
+      limit = '10',
+      offset = '0',
+      interval = 'week',
+      opcode = '0',
+      tag = 'p_tag_empty',
+    } = request.query;
 
-      // Get recent follow/unfollow activity for this user
-      const result = await query<{
-        follower_address: string;
-        is_blocked: boolean;
-        is_muted: boolean;
-        updated_at: Date;
-      }>(
-        `
-        SELECT follower_address, is_blocked, is_muted, updated_at
-        FROM efp_followers
-        WHERE address = $1
-        ORDER BY updated_at DESC
-        LIMIT $2 OFFSET $3
-        `,
-        [address, limitNum, offsetNum]
-      );
+    // Convert interval keyword to PostgreSQL interval
+    const intervalMap: Record<string, string> = {
+      hour: '1 hour',
+      day: '24 hours',
+      week: '168 hours',
+      month: '720 hours',
+      all: '999999 hours',
+    };
+    const pgInterval = intervalMap[interval] || interval;
 
-      // For now, return minimal notification structure
-      // Full implementation would track opcode history
-      return {
-        summary: {
-          interval: interval + '(hrs)',
-          opcode: 'all',
-          total: result.rows.length,
-          total_follows: result.rows.filter((r) => !r.is_blocked && !r.is_muted).length,
-          total_unfollows: 0,
-          total_tags: 0,
-          total_untags: 0,
-        },
-        notifications: [],
-      };
-    }
-  );
+    const result = await getNotifications(address, {
+      limit: Math.min(parseInt(limit, 10) || 10, 100),
+      offset: parseInt(offset, 10) || 0,
+      opcode: parseInt(opcode, 10) || 0,
+      interval: pgInterval,
+      tag,
+    });
+
+    return result;
+  });
 
   // GET /users/:addressOrENS/blocks (P3)
   // Not implemented - returns 501

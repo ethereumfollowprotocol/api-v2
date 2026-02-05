@@ -18,6 +18,7 @@ import {
   batchInsertTags,
   batchDeleteRecords,
   batchDeleteTags,
+  batchInsertEvents,
 } from './handlers.js';
 
 const logger = createLogger('indexer');
@@ -217,10 +218,24 @@ async function indexBaseListRecords(fromBlock: bigint, toBlock: bigint): Promise
 
     const { recordInserts, tagInserts, recordDeletes, tagDeletes } = parseListOpsBatch(parsedOps, 8453, contractAddress);
 
+    // Collect events for notification history
+    const events = listOpLogs.map(log => ({
+      chainId: 8453,
+      blockNumber: log.blockNumber!.toString(),
+      transactionIndex: log.transactionIndex!,
+      logIndex: log.logIndex!,
+      contractAddress: contractAddress.toLowerCase(),
+      slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
+      op: log.args.op! as `0x${string}`,
+      blockHash: log.blockHash!,
+      transactionHash: log.transactionHash!,
+    }));
+
     // Execute batch operations
     await Promise.all([
       batchInsertRecords(recordInserts),
       batchInsertTags(tagInserts),
+      batchInsertEvents(events),
     ]);
 
     // Deletes need to happen after inserts to handle edge cases
@@ -331,9 +346,23 @@ async function indexOptimismListRecords(fromBlock: bigint, toBlock: bigint): Pro
 
     const { recordInserts, tagInserts, recordDeletes, tagDeletes } = parseListOpsBatch(parsedOps, 10, contractAddress);
 
+    // Collect events for notification history
+    const events = listOpLogs.map(log => ({
+      chainId: 10,
+      blockNumber: log.blockNumber!.toString(),
+      transactionIndex: log.transactionIndex!,
+      logIndex: log.logIndex!,
+      contractAddress: contractAddress.toLowerCase(),
+      slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
+      op: log.args.op! as `0x${string}`,
+      blockHash: log.blockHash!,
+      transactionHash: log.transactionHash!,
+    }));
+
     await Promise.all([
       batchInsertRecords(recordInserts),
       batchInsertTags(tagInserts),
+      batchInsertEvents(events),
     ]);
 
     await batchDeleteRecords(recordDeletes);
@@ -435,9 +464,23 @@ async function indexEthereumListRecords(fromBlock: bigint, toBlock: bigint): Pro
 
     const { recordInserts, tagInserts, recordDeletes, tagDeletes } = parseListOpsBatch(parsedOps, 1, contractAddress);
 
+    // Collect events for notification history
+    const events = listOpLogs.map(log => ({
+      chainId: 1,
+      blockNumber: log.blockNumber!.toString(),
+      transactionIndex: log.transactionIndex!,
+      logIndex: log.logIndex!,
+      contractAddress: contractAddress.toLowerCase(),
+      slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
+      op: log.args.op! as `0x${string}`,
+      blockHash: log.blockHash!,
+      transactionHash: log.transactionHash!,
+    }));
+
     await Promise.all([
       batchInsertRecords(recordInserts),
       batchInsertTags(tagInserts),
+      batchInsertEvents(events),
     ]);
 
     await batchDeleteRecords(recordDeletes);
