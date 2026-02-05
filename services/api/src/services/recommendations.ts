@@ -39,6 +39,7 @@ export async function getRecommendations(
   const { limit, offset } = options;
 
   // Read from efp_recommended table - shuffled ENS profiles populated by services repo
+  // Filter out accounts the user is already following
   const result = await query<{
     address: string;
     name: string | null;
@@ -48,11 +49,16 @@ export async function getRecommendations(
   }>(
     `
     SELECT address, name, avatar, header, class
-    FROM efp_recommended
-    ORDER BY index
-    LIMIT $1 OFFSET $2
+    FROM efp_recommended r
+    WHERE NOT EXISTS (
+      SELECT 1 FROM efp_following f
+      WHERE f.address = $1
+        AND f.following_address = r.address
+    )
+    ORDER BY r.index
+    LIMIT $2 OFFSET $3
     `,
-    [limit, offset]
+    [address, limit, offset]
   );
 
   return result.rows.map((row) => ({
@@ -72,6 +78,7 @@ export async function getRecommendationsWithDetails(
   const { limit, offset } = options;
 
   // Read from efp_recommended and join with ENS, stats, and ranks
+  // Filter out accounts the user is already following
   const result = await query<{
     address: string;
     name: string | null;
@@ -96,10 +103,15 @@ export async function getRecommendationsWithDetails(
     LEFT JOIN ens_metadata em ON em.address = r.address
     LEFT JOIN efp_user_stats us ON us.address = r.address
     LEFT JOIN efp_leaderboard lb ON lb.address = r.address
+    WHERE NOT EXISTS (
+      SELECT 1 FROM efp_following f
+      WHERE f.address = $1
+        AND f.following_address = r.address
+    )
     ORDER BY r.index
-    LIMIT $1 OFFSET $2
+    LIMIT $2 OFFSET $3
     `,
-    [limit, offset]
+    [address, limit, offset]
   );
 
   return result.rows.map((row) => ({
