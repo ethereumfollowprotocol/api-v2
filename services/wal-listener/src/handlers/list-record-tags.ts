@@ -11,11 +11,30 @@ interface ListRecordTagData {
   tag: string;
 }
 
+/**
+ * Convert PostgreSQL BYTEA (which comes as '\x...' hex string in JSON) to Buffer.
+ * PostgreSQL's row_to_json() encodes BYTEA as hex with '\x' prefix.
+ */
+function pgByteaToBuffer(value: Buffer | string): Buffer {
+  if (Buffer.isBuffer(value)) {
+    return value;
+  }
+  // PostgreSQL hex format: \x followed by hex chars
+  const hexStr = typeof value === 'string' && value.startsWith('\\x')
+    ? value.slice(2)
+    : String(value);
+  return Buffer.from(hexStr, 'hex');
+}
+
 export async function handleListRecordTagsChange(
   operation: string,
   data: Record<string, unknown>
 ): Promise<void> {
   const tagData = data as unknown as ListRecordTagData;
+
+  // Convert PostgreSQL BYTEA fields to Buffer (handles \x prefix from row_to_json)
+  const slotBuffer = pgByteaToBuffer(tagData.slot);
+  const recordBuffer = pgByteaToBuffer(tagData.record);
 
   // Get record details
   const recordResult = await query<{ record_data: Buffer; record_type: number }>(
@@ -27,7 +46,7 @@ export async function handleListRecordTagsChange(
       AND slot = $3
       AND record = $4
   `,
-    [tagData.chain_id, tagData.contract_address, tagData.slot, tagData.record]
+    [tagData.chain_id, tagData.contract_address, slotBuffer, recordBuffer]
   );
 
   if (recordResult.rows.length === 0 || recordResult.rows[0].record_type !== 1) {
@@ -57,7 +76,7 @@ export async function handleListRecordTagsChange(
       AND l.list_storage_location_contract_address = $2
       AND l.list_storage_location_slot = $3
   `,
-    [tagData.chain_id, tagData.contract_address, tagData.slot]
+    [tagData.chain_id, tagData.contract_address, slotBuffer]
   );
 
   if (listResult.rows.length === 0) return;
@@ -74,7 +93,7 @@ export async function handleListRecordTagsChange(
       AND slot = $3
       AND record = $4
   `,
-    [tagData.chain_id, tagData.contract_address, tagData.slot, tagData.record]
+    [tagData.chain_id, tagData.contract_address, slotBuffer, recordBuffer]
   );
 
   const tags = tagsResult.rows[0]?.tags || [];

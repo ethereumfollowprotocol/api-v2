@@ -17,6 +17,21 @@ interface ListRecordData {
   record_data: Buffer | string;
 }
 
+/**
+ * Convert PostgreSQL BYTEA (which comes as '\x...' hex string in JSON) to Buffer.
+ * PostgreSQL's row_to_json() encodes BYTEA as hex with '\x' prefix.
+ */
+function pgByteaToBuffer(value: Buffer | string): Buffer {
+  if (Buffer.isBuffer(value)) {
+    return value;
+  }
+  // PostgreSQL hex format: \x followed by hex chars
+  const hexStr = typeof value === 'string' && value.startsWith('\\x')
+    ? value.slice(2)
+    : String(value);
+  return Buffer.from(hexStr, 'hex');
+}
+
 export async function handleListRecordsChange(
   operation: string,
   data: Record<string, unknown>
@@ -26,11 +41,11 @@ export async function handleListRecordsChange(
   // Only handle address records (type 1)
   if (record.record_type !== 1) return;
 
-  // Convert buffer to address
-  const recordData = Buffer.isBuffer(record.record_data)
-    ? record.record_data
-    : Buffer.from(record.record_data as string, 'hex');
-  const followedAddress = ('0x' + recordData.toString('hex')).toLowerCase() as Address;
+  // Convert PostgreSQL BYTEA fields to Buffer (handles \x prefix from row_to_json)
+  const recordDataBuffer = pgByteaToBuffer(record.record_data);
+  const slotBuffer = pgByteaToBuffer(record.slot);
+  const recordBuffer = pgByteaToBuffer(record.record);
+  const followedAddress = ('0x' + recordDataBuffer.toString('hex')).toLowerCase() as Address;
 
   // Validate address length (must be exactly 42 chars: 0x + 40 hex)
   if (followedAddress.length !== 42) {
@@ -54,7 +69,7 @@ export async function handleListRecordsChange(
       AND l.list_storage_location_contract_address = $2
       AND l.list_storage_location_slot = $3
   `,
-    [record.chain_id, record.contract_address, record.slot]
+    [record.chain_id, record.contract_address, slotBuffer]
   );
 
   if (listResult.rows.length === 0) {
@@ -91,7 +106,7 @@ export async function handleListRecordsChange(
       AND slot = $3
       AND record = $4
   `,
-    [record.chain_id, record.contract_address, record.slot, record.record]
+    [record.chain_id, record.contract_address, slotBuffer, recordBuffer]
   );
 
   const tags = tagsResult.rows[0]?.tags || [];
