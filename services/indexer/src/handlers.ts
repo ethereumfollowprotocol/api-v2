@@ -150,7 +150,7 @@ export async function batchDeleteTags(deletes: TagDelete[]): Promise<void> {
 export async function batchInsertEvents(events: EventInsert[]): Promise<void> {
   if (events.length === 0) return;
 
-  // 10 fields per event, ~500 per batch to stay under parameter limits
+  // 12 fields per event, ~500 per batch to stay under parameter limits
   const EVENT_CHUNK_SIZE = 500;
 
   for (let chunkStart = 0; chunkStart < events.length; chunkStart += EVENT_CHUNK_SIZE) {
@@ -161,9 +161,9 @@ export async function batchInsertEvents(events: EventInsert[]): Promise<void> {
 
     for (let i = 0; i < chunk.length; i++) {
       const e = chunk[i];
-      const offset = i * 10;
+      const offset = i * 12;
       placeholders.push(
-        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, 'ListOp', $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10})`
+        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, 'ListOp', $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, $${offset + 11}, $${offset + 12})`
       );
       values.push(
         e.chainId,
@@ -175,12 +175,14 @@ export async function batchInsertEvents(events: EventInsert[]): Promise<void> {
         e.blockHash,
         e.transactionHash,
         e.targetAddress,
-        e.blockTimestamp
+        e.slot,
+        e.blockTimestamp,
+        e.blockTimestamp // created_at = block_timestamp for new events
       );
     }
 
     await query(
-      `INSERT INTO events (chain_id, block_number, transaction_index, log_index, contract_address, event_name, event_args, block_hash, transaction_hash, target_address, created_at)
+      `INSERT INTO events (chain_id, block_number, transaction_index, log_index, contract_address, event_name, event_args, block_hash, transaction_hash, target_address, slot, block_timestamp, created_at)
        VALUES ${placeholders.join(', ')}
        ON CONFLICT (chain_id, block_number, transaction_index, log_index) DO NOTHING`,
       values

@@ -454,6 +454,25 @@ const MIGRATIONS = [
       WHERE event_name = 'ListOp';
     `,
   },
+  {
+    name: '010_add_events_block_timestamp_and_slot',
+    sql: `
+      -- Add block_timestamp column for actual blockchain timestamps
+      -- and slot column for efficient joins with efp_lists
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS block_timestamp TIMESTAMPTZ;
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS slot VARCHAR(66);
+
+      -- Efficient notification queries by target + block timestamp
+      CREATE INDEX IF NOT EXISTS idx_events_target_block_timestamp
+      ON events(target_address, block_timestamp DESC)
+      WHERE event_name = 'ListOp';
+
+      -- Efficient slot joins for notifications
+      CREATE INDEX IF NOT EXISTS idx_events_slot_lookup
+      ON events(chain_id, contract_address, slot)
+      WHERE event_name = 'ListOp';
+    `,
+  },
 ];
 
 export async function runMigrations(): Promise<void> {

@@ -87,23 +87,23 @@ export async function getNotifications(
     token_id: string;
     op: string;
     opcode: number;
-    created_at: Date;
+    block_timestamp: Date;
     name: string | null;
     avatar: string | null;
   }>(
     `
     WITH listop_events AS (
       SELECT
-        e.event_args->>'slot' as slot,
+        e.slot,
         e.event_args->>'op' as op,
         e.chain_id,
         e.contract_address,
-        e.created_at,
+        e.block_timestamp,
         -- Extract opcode: position 5-6 (after 0x and version)
         ('x' || substring(e.event_args->>'op', 5, 2))::bit(8)::int as opcode
       FROM events e
       WHERE e.event_name = 'ListOp'
-        AND e.created_at >= NOW() - $3::interval
+        AND e.block_timestamp >= NOW() - $3::interval
         -- Use indexed target_address column
         AND e.target_address = $4
     )
@@ -112,14 +112,14 @@ export async function getNotifications(
       el.token_id::text as token_id,
       le.op,
       le.opcode,
-      le.created_at,
+      le.block_timestamp,
       em.name,
       em.avatar
     FROM listop_events le
     JOIN efp_lists el ON
       el.list_storage_location_chain_id = le.chain_id
       AND el.list_storage_location_contract_address = le.contract_address
-      AND convert_from(el.list_storage_location_slot, 'UTF8') = le.slot
+      AND encode(el.list_storage_location_slot, 'hex') = substring(le.slot, 3)
     JOIN efp_account_metadata am ON
       am.address = el."user"
       AND am.key = 'primary-list'
@@ -127,7 +127,7 @@ export async function getNotifications(
     LEFT JOIN ens_metadata em ON em.address = el."user"
     WHERE el."user" IS NOT NULL
       ${opcodeFilter}
-    ORDER BY le.created_at DESC
+    ORDER BY le.block_timestamp DESC
     LIMIT $1 OFFSET $2
     `,
     [limit, offset, interval, targetAddress.toLowerCase()]
@@ -150,7 +150,7 @@ export async function getNotifications(
         opcode: row.opcode,
         op: row.op,
         tag: parsedTag,
-        updated_at: row.created_at.toISOString(),
+        updated_at: row.block_timestamp.toISOString(),
       };
     })
     .filter((n): n is Notification => n !== null);

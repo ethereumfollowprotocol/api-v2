@@ -218,6 +218,15 @@ async function indexBaseListRecords(fromBlock: bigint, toBlock: bigint): Promise
 
   // Batch process ListOp events
   if (listOpLogs.length > 0) {
+    // Get unique blocks and fetch their timestamps
+    const uniqueBlocks = [...new Set(listOpLogs.map(log => log.blockNumber!))];
+    const blockTimestamps = new Map<bigint, Date>();
+
+    for (const blockNum of uniqueBlocks) {
+      const block = await baseClient.getBlock({ blockNumber: blockNum });
+      blockTimestamps.set(blockNum, new Date(Number(block.timestamp) * 1000));
+    }
+
     const parsedOps = listOpLogs.map(log => ({
       slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
       op: log.args.op! as `0x${string}`,
@@ -228,17 +237,19 @@ async function indexBaseListRecords(fromBlock: bigint, toBlock: bigint): Promise
     // Collect events for notification history
     const events = listOpLogs.map(log => {
       const op = log.args.op! as `0x${string}`;
+      const slot = ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`;
       return {
         chainId: 8453,
         blockNumber: log.blockNumber!.toString(),
         transactionIndex: log.transactionIndex!,
         logIndex: log.logIndex!,
         contractAddress: contractAddress.toLowerCase(),
-        slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
+        slot,
         op,
         targetAddress: extractTargetAddress(op),
         blockHash: log.blockHash!,
         transactionHash: log.transactionHash!,
+        blockTimestamp: blockTimestamps.get(log.blockNumber!)!,
       };
     });
 
@@ -350,6 +361,15 @@ async function indexOptimismListRecords(fromBlock: bigint, toBlock: bigint): Pro
 
   // Batch process ListOp events
   if (listOpLogs.length > 0) {
+    // Get unique blocks and fetch their timestamps
+    const uniqueBlocks = [...new Set(listOpLogs.map(log => log.blockNumber!))];
+    const blockTimestamps = new Map<bigint, Date>();
+
+    for (const blockNum of uniqueBlocks) {
+      const block = await optimismClient.getBlock({ blockNumber: blockNum });
+      blockTimestamps.set(blockNum, new Date(Number(block.timestamp) * 1000));
+    }
+
     const parsedOps = listOpLogs.map(log => ({
       slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
       op: log.args.op! as `0x${string}`,
@@ -360,17 +380,19 @@ async function indexOptimismListRecords(fromBlock: bigint, toBlock: bigint): Pro
     // Collect events for notification history
     const events = listOpLogs.map(log => {
       const op = log.args.op! as `0x${string}`;
+      const slot = ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`;
       return {
         chainId: 10,
         blockNumber: log.blockNumber!.toString(),
         transactionIndex: log.transactionIndex!,
         logIndex: log.logIndex!,
         contractAddress: contractAddress.toLowerCase(),
-        slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
+        slot,
         op,
         targetAddress: extractTargetAddress(op),
         blockHash: log.blockHash!,
         transactionHash: log.transactionHash!,
+        blockTimestamp: blockTimestamps.get(log.blockNumber!)!,
       };
     });
 
@@ -472,6 +494,15 @@ async function indexEthereumListRecords(fromBlock: bigint, toBlock: bigint): Pro
 
   // Batch process ListOp events
   if (listOpLogs.length > 0) {
+    // Get unique blocks and fetch their timestamps
+    const uniqueBlocks = [...new Set(listOpLogs.map(log => log.blockNumber!))];
+    const blockTimestamps = new Map<bigint, Date>();
+
+    for (const blockNum of uniqueBlocks) {
+      const block = await mainnetClient.getBlock({ blockNumber: blockNum });
+      blockTimestamps.set(blockNum, new Date(Number(block.timestamp) * 1000));
+    }
+
     const parsedOps = listOpLogs.map(log => ({
       slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
       op: log.args.op! as `0x${string}`,
@@ -482,17 +513,19 @@ async function indexEthereumListRecords(fromBlock: bigint, toBlock: bigint): Pro
     // Collect events for notification history
     const events = listOpLogs.map(log => {
       const op = log.args.op! as `0x${string}`;
+      const slot = ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`;
       return {
         chainId: 1,
         blockNumber: log.blockNumber!.toString(),
         transactionIndex: log.transactionIndex!,
         logIndex: log.logIndex!,
         contractAddress: contractAddress.toLowerCase(),
-        slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
+        slot,
         op,
         targetAddress: extractTargetAddress(op),
         blockHash: log.blockHash!,
         transactionHash: log.transactionHash!,
+        blockTimestamp: blockTimestamps.get(log.blockNumber!)!,
       };
     });
 
