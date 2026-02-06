@@ -2,8 +2,43 @@ import { getClient, createLogger } from '@efp/shared';
 
 const logger = createLogger('migrations');
 
-// Migration SQL scripts in order
-const MIGRATIONS = [
+// Schema migrations run BEFORE indexer catches up (DDL only - no data dependencies)
+const SCHEMA_MIGRATIONS = [
+  {
+    name: '009_add_events_target_address_schema',
+    sql: `
+      -- Add target_address column to events table for efficient notification queries
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS target_address VARCHAR(42);
+
+      -- Create index for efficient queries by target address
+      CREATE INDEX IF NOT EXISTS idx_events_target_address
+      ON events(target_address, created_at DESC)
+      WHERE event_name = 'ListOp';
+    `,
+  },
+  {
+    name: '010_add_events_block_timestamp_and_slot',
+    sql: `
+      -- Add block_timestamp column for actual blockchain timestamps
+      -- and slot column for efficient joins with efp_lists
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS block_timestamp TIMESTAMPTZ;
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS slot VARCHAR(66);
+
+      -- Efficient notification queries by target + block timestamp
+      CREATE INDEX IF NOT EXISTS idx_events_target_block_timestamp
+      ON events(target_address, block_timestamp DESC)
+      WHERE event_name = 'ListOp';
+
+      -- Efficient slot joins for notifications
+      CREATE INDEX IF NOT EXISTS idx_events_slot_lookup
+      ON events(chain_id, contract_address, slot)
+      WHERE event_name = 'ListOp';
+    `,
+  },
+];
+
+// Data migrations run AFTER indexer catches up (populate derived tables)
+const DATA_MIGRATIONS = [
   {
     name: '001_populate_efp_user_stats',
     sql: `
@@ -436,61 +471,47 @@ const MIGRATIONS = [
           FOR EACH ROW EXECUTE FUNCTION notify_ens_metadata_change();
     `,
   },
-  {
-    name: '009_add_events_target_address',
-    sql: `
-      -- Add target_address column to events table for efficient notification queries
-      -- The target address is extracted from the op hex: position 11-50 (after 0x, version, opcode, recordVersion, recordType)
-      ALTER TABLE events ADD COLUMN IF NOT EXISTS target_address VARCHAR(42);
-
-      -- Backfill target_address from existing ListOp events
-      UPDATE events
-      SET target_address = '0x' || lower(substring(event_args->>'op', 11, 40))
-      WHERE event_name = 'ListOp' AND target_address IS NULL;
-
-      -- Create index for efficient queries by target address
-      CREATE INDEX IF NOT EXISTS idx_events_target_address
-      ON events(target_address, created_at DESC)
-      WHERE event_name = 'ListOp';
-    `,
-  },
-  {
-    name: '010_add_events_block_timestamp_and_slot',
-    sql: `
-      -- Add block_timestamp column for actual blockchain timestamps
-      -- and slot column for efficient joins with efp_lists
-      ALTER TABLE events ADD COLUMN IF NOT EXISTS block_timestamp TIMESTAMPTZ;
-      ALTER TABLE events ADD COLUMN IF NOT EXISTS slot VARCHAR(66);
-
-      -- Efficient notification queries by target + block timestamp
-      CREATE INDEX IF NOT EXISTS idx_events_target_block_timestamp
-      ON events(target_address, block_timestamp DESC)
-      WHERE event_name = 'ListOp';
-
-      -- Efficient slot joins for notifications
-      CREATE INDEX IF NOT EXISTS idx_events_slot_lookup
-      ON events(chain_id, contract_address, slot)
-      WHERE event_name = 'ListOp';
-    `,
-  },
 ];
 
-export async function runMigrations(): Promise<void> {
+export async function runSchemaMigrations(): Promise<void> {
   const client = await getClient();
 
   try {
-    for (const migration of MIGRATIONS) {
-      logger.info({ name: migration.name }, 'Running migration');
+    for (const migration of SCHEMA_MIGRATIONS) {
+      logger.info({ name: migration.name }, 'Running schema migration');
       const startTime = Date.now();
 
       await client.query(migration.sql);
 
       const duration = Date.now() - startTime;
-      logger.info({ name: migration.name, duration }, 'Migration completed');
+      logger.info({ name: migration.name, duration }, 'Schema migration completed');
     }
 
-    logger.info('All migrations completed successfully');
+    logger.info('All schema migrations completed successfully');
   } finally {
     client.release();
   }
 }
+
+export async function runDataMigrations(): Promise<void> {
+  const client = await getClient();
+
+  try {
+    for (const migration of DATA_MIGRATIONS) {
+      logger.info({ name: migration.name }, 'Running data migration');
+      const startTime = Date.now();
+
+      await client.query(migration.sql);
+
+      const duration = Date.now() - startTime;
+      logger.info({ name: migration.name, duration }, 'Data migration completed');
+    }
+
+    logger.info('All data migrations completed successfully');
+  } finally {
+    client.release();
+  }
+}
+
+// Backwards compatibility
+export const runMigrations = runDataMigrations;
