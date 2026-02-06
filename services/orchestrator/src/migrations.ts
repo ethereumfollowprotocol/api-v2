@@ -436,6 +436,24 @@ const MIGRATIONS = [
           FOR EACH ROW EXECUTE FUNCTION notify_ens_metadata_change();
     `,
   },
+  {
+    name: '009_add_events_target_address',
+    sql: `
+      -- Add target_address column to events table for efficient notification queries
+      -- The target address is extracted from the op hex: position 11-50 (after 0x, version, opcode, recordVersion, recordType)
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS target_address VARCHAR(42);
+
+      -- Backfill target_address from existing ListOp events
+      UPDATE events
+      SET target_address = '0x' || lower(substring(event_args->>'op', 11, 40))
+      WHERE event_name = 'ListOp' AND target_address IS NULL;
+
+      -- Create index for efficient queries by target address
+      CREATE INDEX IF NOT EXISTS idx_events_target_address
+      ON events(target_address, created_at DESC)
+      WHERE event_name = 'ListOp';
+    `,
+  },
 ];
 
 export async function runMigrations(): Promise<void> {

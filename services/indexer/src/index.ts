@@ -89,6 +89,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Extract target address from ListOp hex
+// Format: 0x + version(2) + opcode(2) + recordVersion(2) + recordType(2) + address(40)
+function extractTargetAddress(op: string): string {
+  if (!op || op.length < 50) return '';
+  return '0x' + op.slice(10, 50).toLowerCase();
+}
+
 // ============================================================
 // Base Chain Indexer
 // ============================================================
@@ -219,17 +226,21 @@ async function indexBaseListRecords(fromBlock: bigint, toBlock: bigint): Promise
     const { recordInserts, tagInserts, recordDeletes, tagDeletes } = parseListOpsBatch(parsedOps, 8453, contractAddress);
 
     // Collect events for notification history
-    const events = listOpLogs.map(log => ({
-      chainId: 8453,
-      blockNumber: log.blockNumber!.toString(),
-      transactionIndex: log.transactionIndex!,
-      logIndex: log.logIndex!,
-      contractAddress: contractAddress.toLowerCase(),
-      slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
-      op: log.args.op! as `0x${string}`,
-      blockHash: log.blockHash!,
-      transactionHash: log.transactionHash!,
-    }));
+    const events = listOpLogs.map(log => {
+      const op = log.args.op! as `0x${string}`;
+      return {
+        chainId: 8453,
+        blockNumber: log.blockNumber!.toString(),
+        transactionIndex: log.transactionIndex!,
+        logIndex: log.logIndex!,
+        contractAddress: contractAddress.toLowerCase(),
+        slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
+        op,
+        targetAddress: extractTargetAddress(op),
+        blockHash: log.blockHash!,
+        transactionHash: log.transactionHash!,
+      };
+    });
 
     // Execute batch operations
     await Promise.all([
@@ -347,17 +358,21 @@ async function indexOptimismListRecords(fromBlock: bigint, toBlock: bigint): Pro
     const { recordInserts, tagInserts, recordDeletes, tagDeletes } = parseListOpsBatch(parsedOps, 10, contractAddress);
 
     // Collect events for notification history
-    const events = listOpLogs.map(log => ({
-      chainId: 10,
-      blockNumber: log.blockNumber!.toString(),
-      transactionIndex: log.transactionIndex!,
-      logIndex: log.logIndex!,
-      contractAddress: contractAddress.toLowerCase(),
-      slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
-      op: log.args.op! as `0x${string}`,
-      blockHash: log.blockHash!,
-      transactionHash: log.transactionHash!,
-    }));
+    const events = listOpLogs.map(log => {
+      const op = log.args.op! as `0x${string}`;
+      return {
+        chainId: 10,
+        blockNumber: log.blockNumber!.toString(),
+        transactionIndex: log.transactionIndex!,
+        logIndex: log.logIndex!,
+        contractAddress: contractAddress.toLowerCase(),
+        slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
+        op,
+        targetAddress: extractTargetAddress(op),
+        blockHash: log.blockHash!,
+        transactionHash: log.transactionHash!,
+      };
+    });
 
     await Promise.all([
       batchInsertRecords(recordInserts),
@@ -465,17 +480,21 @@ async function indexEthereumListRecords(fromBlock: bigint, toBlock: bigint): Pro
     const { recordInserts, tagInserts, recordDeletes, tagDeletes } = parseListOpsBatch(parsedOps, 1, contractAddress);
 
     // Collect events for notification history
-    const events = listOpLogs.map(log => ({
-      chainId: 1,
-      blockNumber: log.blockNumber!.toString(),
-      transactionIndex: log.transactionIndex!,
-      logIndex: log.logIndex!,
-      contractAddress: contractAddress.toLowerCase(),
-      slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
-      op: log.args.op! as `0x${string}`,
-      blockHash: log.blockHash!,
-      transactionHash: log.transactionHash!,
-    }));
+    const events = listOpLogs.map(log => {
+      const op = log.args.op! as `0x${string}`;
+      return {
+        chainId: 1,
+        blockNumber: log.blockNumber!.toString(),
+        transactionIndex: log.transactionIndex!,
+        logIndex: log.logIndex!,
+        contractAddress: contractAddress.toLowerCase(),
+        slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
+        op,
+        targetAddress: extractTargetAddress(op),
+        blockHash: log.blockHash!,
+        transactionHash: log.transactionHash!,
+      };
+    });
 
     await Promise.all([
       batchInsertRecords(recordInserts),
