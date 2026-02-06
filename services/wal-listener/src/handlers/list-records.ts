@@ -45,7 +45,9 @@ export async function handleListRecordsChange(
   const recordDataBuffer = pgByteaToBuffer(record.record_data);
   const slotBuffer = pgByteaToBuffer(record.slot);
   const recordBuffer = pgByteaToBuffer(record.record);
-  const followedAddress = ('0x' + recordDataBuffer.toString('hex')).toLowerCase() as Address;
+
+  // record_data stores addresses as UTF-8 text (e.g., "0x1234..."), not raw binary
+  const followedAddress = recordDataBuffer.toString('utf8').toLowerCase() as Address;
 
   // Validate address length (must be exactly 42 chars: 0x + 40 hex)
   if (followedAddress.length !== 42) {

@@ -53,9 +53,8 @@ export async function handleListRecordTagsChange(
     return;
   }
 
-  const followedAddress = (
-    '0x' + recordResult.rows[0].record_data.toString('hex')
-  ).toLowerCase() as Address;
+  // record_data stores addresses as UTF-8 text (e.g., "0x1234..."), not raw binary
+  const followedAddress = recordResult.rows[0].record_data.toString('utf8').toLowerCase() as Address;
 
   // Validate address length (must be exactly 42 chars: 0x + 40 hex)
   if (followedAddress.length !== 42) {
