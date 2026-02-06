@@ -86,6 +86,13 @@ CREATE TABLE IF NOT EXISTS events (
     PRIMARY KEY (chain_id, block_number, transaction_index, log_index)
 );
 
+-- Index for querying ListOp events by created_at (for notifications)
+CREATE INDEX IF NOT EXISTS idx_events_listop_created ON events(event_name, created_at DESC)
+WHERE event_name = 'ListOp';
+
+-- GIN index for JSONB queries on event_args (for filtering by slot/op)
+CREATE INDEX IF NOT EXISTS idx_events_args ON events USING GIN(event_args);
+
 -- EFP Lists (NFT ownership)
 CREATE TABLE IF NOT EXISTS efp_lists (
     nft_chain_id                            BIGINT DEFAULT 8453,

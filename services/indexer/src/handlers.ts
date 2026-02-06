@@ -40,6 +40,20 @@ interface TagDelete {
   tag: string;
 }
 
+interface EventInsert {
+  chainId: number;
+  blockNumber: string;
+  transactionIndex: number;
+  logIndex: number;
+  contractAddress: string;
+  slot: string;
+  op: string;
+  targetAddress: string;
+  blockHash: string;
+  transactionHash: string;
+  blockTimestamp: Date;
+}
+
 // PostgreSQL has a limit of ~65535 parameters per query
 // With 7 fields per record, we can safely do ~500 records per batch
 const BATCH_CHUNK_SIZE = 500;
@@ -131,6 +145,51 @@ export async function batchDeleteTags(deletes: TagDelete[]): Promise<void> {
   }
 
   logger.info({ count: deletes.length }, 'Batch deleted tags');
+}
+
+export async function batchInsertEvents(events: EventInsert[]): Promise<void> {
+  if (events.length === 0) return;
+
+  // 12 fields per event, ~500 per batch to stay under parameter limits
+  const EVENT_CHUNK_SIZE = 500;
+
+  for (let chunkStart = 0; chunkStart < events.length; chunkStart += EVENT_CHUNK_SIZE) {
+    const chunk = events.slice(chunkStart, chunkStart + EVENT_CHUNK_SIZE);
+
+    const values: unknown[] = [];
+    const placeholders: string[] = [];
+
+    for (let i = 0; i < chunk.length; i++) {
+      const e = chunk[i];
+      const offset = i * 12;
+      placeholders.push(
+        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, 'ListOp', $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, $${offset + 11}, $${offset + 12})`
+      );
+      values.push(
+        e.chainId,
+        e.blockNumber,
+        e.transactionIndex,
+        e.logIndex,
+        e.contractAddress,
+        JSON.stringify({ slot: e.slot, op: e.op }),
+        e.blockHash,
+        e.transactionHash,
+        e.targetAddress,
+        e.slot,
+        e.blockTimestamp,
+        e.blockTimestamp // created_at = block_timestamp for new events
+      );
+    }
+
+    await query(
+      `INSERT INTO events (chain_id, block_number, transaction_index, log_index, contract_address, event_name, event_args, block_hash, transaction_hash, target_address, slot, block_timestamp, created_at)
+       VALUES ${placeholders.join(', ')}
+       ON CONFLICT (chain_id, block_number, transaction_index, log_index) DO NOTHING`,
+      values
+    );
+  }
+
+  logger.info({ count: events.length }, 'Batch inserted events');
 }
 
 // Parse and categorize a batch of ListOps for bulk processing

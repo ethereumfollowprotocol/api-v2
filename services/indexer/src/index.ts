@@ -18,6 +18,7 @@ import {
   batchInsertTags,
   batchDeleteRecords,
   batchDeleteTags,
+  batchInsertEvents,
 } from './handlers.js';
 
 const logger = createLogger('indexer');
@@ -86,6 +87,13 @@ async function setIndexerCaughtUp(caughtUp: boolean): Promise<void> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Extract target address from ListOp hex
+// Format: 0x + version(2) + opcode(2) + recordVersion(2) + recordType(2) + address(40)
+function extractTargetAddress(op: string): string {
+  if (!op || op.length < 50) return '';
+  return '0x' + op.slice(10, 50).toLowerCase();
 }
 
 // ============================================================
@@ -210,6 +218,15 @@ async function indexBaseListRecords(fromBlock: bigint, toBlock: bigint): Promise
 
   // Batch process ListOp events
   if (listOpLogs.length > 0) {
+    // Get unique blocks and fetch their timestamps
+    const uniqueBlocks = [...new Set(listOpLogs.map(log => log.blockNumber!))];
+    const blockTimestamps = new Map<bigint, Date>();
+
+    for (const blockNum of uniqueBlocks) {
+      const block = await baseClient.getBlock({ blockNumber: blockNum });
+      blockTimestamps.set(blockNum, new Date(Number(block.timestamp) * 1000));
+    }
+
     const parsedOps = listOpLogs.map(log => ({
       slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
       op: log.args.op! as `0x${string}`,
@@ -217,10 +234,30 @@ async function indexBaseListRecords(fromBlock: bigint, toBlock: bigint): Promise
 
     const { recordInserts, tagInserts, recordDeletes, tagDeletes } = parseListOpsBatch(parsedOps, 8453, contractAddress);
 
+    // Collect events for notification history
+    const events = listOpLogs.map(log => {
+      const op = log.args.op! as `0x${string}`;
+      const slot = ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`;
+      return {
+        chainId: 8453,
+        blockNumber: log.blockNumber!.toString(),
+        transactionIndex: log.transactionIndex!,
+        logIndex: log.logIndex!,
+        contractAddress: contractAddress.toLowerCase(),
+        slot,
+        op,
+        targetAddress: extractTargetAddress(op),
+        blockHash: log.blockHash!,
+        transactionHash: log.transactionHash!,
+        blockTimestamp: blockTimestamps.get(log.blockNumber!)!,
+      };
+    });
+
     // Execute batch operations
     await Promise.all([
       batchInsertRecords(recordInserts),
       batchInsertTags(tagInserts),
+      batchInsertEvents(events),
     ]);
 
     // Deletes need to happen after inserts to handle edge cases
@@ -324,6 +361,15 @@ async function indexOptimismListRecords(fromBlock: bigint, toBlock: bigint): Pro
 
   // Batch process ListOp events
   if (listOpLogs.length > 0) {
+    // Get unique blocks and fetch their timestamps
+    const uniqueBlocks = [...new Set(listOpLogs.map(log => log.blockNumber!))];
+    const blockTimestamps = new Map<bigint, Date>();
+
+    for (const blockNum of uniqueBlocks) {
+      const block = await optimismClient.getBlock({ blockNumber: blockNum });
+      blockTimestamps.set(blockNum, new Date(Number(block.timestamp) * 1000));
+    }
+
     const parsedOps = listOpLogs.map(log => ({
       slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
       op: log.args.op! as `0x${string}`,
@@ -331,9 +377,29 @@ async function indexOptimismListRecords(fromBlock: bigint, toBlock: bigint): Pro
 
     const { recordInserts, tagInserts, recordDeletes, tagDeletes } = parseListOpsBatch(parsedOps, 10, contractAddress);
 
+    // Collect events for notification history
+    const events = listOpLogs.map(log => {
+      const op = log.args.op! as `0x${string}`;
+      const slot = ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`;
+      return {
+        chainId: 10,
+        blockNumber: log.blockNumber!.toString(),
+        transactionIndex: log.transactionIndex!,
+        logIndex: log.logIndex!,
+        contractAddress: contractAddress.toLowerCase(),
+        slot,
+        op,
+        targetAddress: extractTargetAddress(op),
+        blockHash: log.blockHash!,
+        transactionHash: log.transactionHash!,
+        blockTimestamp: blockTimestamps.get(log.blockNumber!)!,
+      };
+    });
+
     await Promise.all([
       batchInsertRecords(recordInserts),
       batchInsertTags(tagInserts),
+      batchInsertEvents(events),
     ]);
 
     await batchDeleteRecords(recordDeletes);
@@ -428,6 +494,15 @@ async function indexEthereumListRecords(fromBlock: bigint, toBlock: bigint): Pro
 
   // Batch process ListOp events
   if (listOpLogs.length > 0) {
+    // Get unique blocks and fetch their timestamps
+    const uniqueBlocks = [...new Set(listOpLogs.map(log => log.blockNumber!))];
+    const blockTimestamps = new Map<bigint, Date>();
+
+    for (const blockNum of uniqueBlocks) {
+      const block = await mainnetClient.getBlock({ blockNumber: blockNum });
+      blockTimestamps.set(blockNum, new Date(Number(block.timestamp) * 1000));
+    }
+
     const parsedOps = listOpLogs.map(log => ({
       slot: ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`,
       op: log.args.op! as `0x${string}`,
@@ -435,9 +510,29 @@ async function indexEthereumListRecords(fromBlock: bigint, toBlock: bigint): Pro
 
     const { recordInserts, tagInserts, recordDeletes, tagDeletes } = parseListOpsBatch(parsedOps, 1, contractAddress);
 
+    // Collect events for notification history
+    const events = listOpLogs.map(log => {
+      const op = log.args.op! as `0x${string}`;
+      const slot = ('0x' + log.args.slot!.toString(16).padStart(64, '0')) as `0x${string}`;
+      return {
+        chainId: 1,
+        blockNumber: log.blockNumber!.toString(),
+        transactionIndex: log.transactionIndex!,
+        logIndex: log.logIndex!,
+        contractAddress: contractAddress.toLowerCase(),
+        slot,
+        op,
+        targetAddress: extractTargetAddress(op),
+        blockHash: log.blockHash!,
+        transactionHash: log.transactionHash!,
+        blockTimestamp: blockTimestamps.get(log.blockNumber!)!,
+      };
+    });
+
     await Promise.all([
       batchInsertRecords(recordInserts),
       batchInsertTags(tagInserts),
+      batchInsertEvents(events),
     ]);
 
     await batchDeleteRecords(recordDeletes);

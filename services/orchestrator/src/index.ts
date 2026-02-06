@@ -9,7 +9,7 @@ import {
   ensureUsersIndex,
   ensureSchema,
 } from '@efp/shared';
-import { runMigrations } from './migrations.js';
+import { runSchemaMigrations, runDataMigrations } from './migrations.js';
 import { indexUsersToElasticsearch } from './elasticsearch.js';
 
 const logger = createLogger('orchestrator');
@@ -20,6 +20,11 @@ async function main() {
   try {
     // Ensure database schema exists
     await ensureSchema();
+
+    // Run schema migrations early (before indexer catches up)
+    // These are DDL-only and have no data dependencies
+    logger.info('Running schema migrations...');
+    await runSchemaMigrations();
 
     // Check current state
     const state = await getSystemState();
@@ -37,12 +42,12 @@ async function main() {
       await waitForIndexerCatchUp(30000);
     }
 
-    // Phase 2: Run migration
+    // Phase 2: Run data migrations (populate derived tables)
     logger.info('Starting derived table migration...');
     await setPhase('migrating');
 
-    // Run SQL migrations
-    await runMigrations();
+    // Run SQL data migrations
+    await runDataMigrations();
 
     // Ensure Elasticsearch index exists
     await ensureUsersIndex();
