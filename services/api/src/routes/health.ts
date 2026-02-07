@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { getPool, getRedis, getElasticsearch, getSystemState } from '@efp/shared';
+import { getPool, getRedis, getSystemState } from '@efp/shared';
 
 export async function healthRoutes(app: FastifyInstance) {
   // Basic health check
@@ -42,15 +42,6 @@ export async function healthRoutes(app: FastifyInstance) {
       checks.redis = { status: 'ok', latency: Date.now() - start };
     } catch (err) {
       checks.redis = { status: 'error', error: (err as Error).message };
-    }
-
-    // Check Elasticsearch
-    try {
-      const start = Date.now();
-      await getElasticsearch().ping();
-      checks.elasticsearch = { status: 'ok', latency: Date.now() - start };
-    } catch (err) {
-      checks.elasticsearch = { status: 'error', error: (err as Error).message };
     }
 
     // Get system state
