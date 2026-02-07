@@ -14,10 +14,6 @@ export {
   setCache,
   deleteCache,
   deleteCachePattern,
-  getElasticsearch,
-  closeElasticsearch,
-  ensureUsersIndex,
-  ES_INDICES,
 } from './db/index.js';
 
 // Logger

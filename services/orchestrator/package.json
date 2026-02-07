@@ -9,8 +9,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@efp/shared": "*",
-    "@elastic/elasticsearch": "^8.11.0"
+    "@efp/shared": "*"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

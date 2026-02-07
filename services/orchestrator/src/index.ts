@@ -7,11 +7,9 @@ import {
   setSchemaMigrationsComplete,
   waitForIndexerCatchUp,
   getSystemState,
-  ensureUsersIndex,
   ensureSchema,
 } from '@efp/shared';
 import { runSchemaMigrations, runDataMigrations } from './migrations.js';
-import { indexUsersToElasticsearch } from './elasticsearch.js';
 
 const logger = createLogger('orchestrator');
 
@@ -54,12 +52,6 @@ async function main() {
 
     // Run SQL data migrations
     await runDataMigrations();
-
-    // Ensure Elasticsearch index exists
-    await ensureUsersIndex();
-
-    // Index users to Elasticsearch
-    await indexUsersToElasticsearch();
 
     // Mark complete
     await setMigrationComplete(true);

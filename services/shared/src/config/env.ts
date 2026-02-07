@@ -8,9 +8,6 @@ const envSchema = z.object({
   // Redis
   REDIS_URL: z.string().url(),
 
-  // Elasticsearch
-  ELASTICSEARCH_URL: z.string().url(),
-
   // Chain RPCs
   PRIMARY_RPC_BASE: z.string().url(),
   PRIMARY_RPC_OP: z.string().url(),
