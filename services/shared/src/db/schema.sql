@@ -63,7 +63,8 @@ INSERT INTO efp_system_state (key, value) VALUES
     ('phase', 'historical'),
     ('indexer_caught_up', 'false'),
     ('migration_complete', 'false'),
-    ('last_migration_block', '0')
+    ('last_migration_block', '0'),
+    ('schema_migrations_complete', 'false')
 ON CONFLICT (key) DO NOTHING;
 
 -- ============================================================

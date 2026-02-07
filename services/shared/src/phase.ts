@@ -8,12 +8,13 @@ export interface SystemState {
   indexerCaughtUp: boolean;
   migrationComplete: boolean;
   lastMigrationBlock: number;
+  schemaMigrationsComplete: boolean;
 }
 
 export async function getSystemState(): Promise<SystemState> {
   const result = await query<{ key: string; value: string }>(`
     SELECT key, value FROM efp_system_state
-    WHERE key IN ('phase', 'indexer_caught_up', 'migration_complete', 'last_migration_block')
+    WHERE key IN ('phase', 'indexer_caught_up', 'migration_complete', 'last_migration_block', 'schema_migrations_complete')
   `);
 
   const stateMap = new Map(result.rows.map((row) => [row.key, row.value]));
@@ -23,6 +24,7 @@ export async function getSystemState(): Promise<SystemState> {
     indexerCaughtUp: stateMap.get('indexer_caught_up') === 'true',
     migrationComplete: stateMap.get('migration_complete') === 'true',
     lastMigrationBlock: parseInt(stateMap.get('last_migration_block') || '0', 10),
+    schemaMigrationsComplete: stateMap.get('schema_migrations_complete') === 'true',
   };
 }
 
@@ -68,6 +70,34 @@ export async function setMigrationComplete(complete: boolean): Promise<void> {
   `,
     [complete.toString()]
   );
+}
+
+export async function isSchemaMigrationsComplete(): Promise<boolean> {
+  const result = await query<{ value: string }>(`
+    SELECT value FROM efp_system_state WHERE key = 'schema_migrations_complete'
+  `);
+  return result.rows[0]?.value === 'true';
+}
+
+export async function setSchemaMigrationsComplete(complete: boolean): Promise<void> {
+  await query(
+    `
+    INSERT INTO efp_system_state (key, value, updated_at)
+    VALUES ('schema_migrations_complete', $1, NOW())
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+  `,
+    [complete.toString()]
+  );
+  logger.info({ complete }, 'Schema migrations complete flag updated');
+}
+
+export async function resetDataMigrations(): Promise<void> {
+  await query(`
+    UPDATE efp_system_state
+    SET value = 'false', updated_at = NOW()
+    WHERE key IN ('indexer_caught_up', 'migration_complete')
+  `);
+  logger.info('Reset indexer_caught_up and migration_complete flags');
 }
 
 export async function waitForIndexerCatchUp(pollIntervalMs = 30000): Promise<void> {

@@ -619,6 +619,14 @@ async function main() {
     await ensureIndexerStateTable();
     logger.info('Database schema ready');
 
+    // Reset flags on indexer startup - this signals orchestrator that data migrations need to run
+    await query(`
+      UPDATE efp_system_state
+      SET value = 'false', updated_at = NOW()
+      WHERE key IN ('indexer_caught_up', 'migration_complete')
+    `);
+    logger.info('Reset indexer_caught_up and migration_complete flags');
+
     // Start blocks (EFP deployment blocks)
     const baseStartBlock = BigInt(20180000);
     const opStartBlock = BigInt(125792000);
