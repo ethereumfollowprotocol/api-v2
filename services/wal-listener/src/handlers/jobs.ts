@@ -47,14 +47,6 @@ export async function publishMutualsJob(addressA: string, addressB: string): Pro
   );
 }
 
-export async function publishESUserSync(address: string): Promise<void> {
-  await publishJob(
-    'sync-user-to-elasticsearch',
-    { address },
-    { singletonKey: `es:${address}`, singletonSeconds: 5 }
-  );
-}
-
 export async function publishResyncUserRelationships(
   address: string,
   newPrimaryList: number | null
