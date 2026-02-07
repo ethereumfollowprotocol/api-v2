@@ -4,6 +4,7 @@ import {
   closePool,
   setPhase,
   setMigrationComplete,
+  setSchemaMigrationsComplete,
   waitForIndexerCatchUp,
   getSystemState,
   ensureUsersIndex,
@@ -21,29 +22,34 @@ async function main() {
     // Ensure database schema exists
     await ensureSchema();
 
-    // Run schema migrations early (before indexer catches up)
-    // These are DDL-only and have no data dependencies
-    logger.info('Running schema migrations...');
-    await runSchemaMigrations();
-
-    // Check current state
     const state = await getSystemState();
     logger.info({ state }, 'Current system state');
 
-    // If already complete, skip to monitoring
-    if (state.migrationComplete) {
-      logger.info('Migration already complete, entering monitoring mode');
+    // Step 1: Run schema migrations if not complete
+    if (!state.schemaMigrationsComplete) {
+      logger.info('Running schema migrations...');
+      await runSchemaMigrations();
+      await setSchemaMigrationsComplete(true);
+    } else {
+      logger.info('Schema migrations already complete');
+    }
+
+    // Step 2: Check if data migrations already done
+    // Re-fetch state since indexer may have reset flags
+    const currentState = await getSystemState();
+    if (currentState.migrationComplete) {
+      logger.info('Data migrations already complete, entering monitoring mode');
       await monitorSystem();
       return;
     }
 
-    // Phase 1: Wait for indexer to catch up
-    if (!state.indexerCaughtUp) {
+    // Step 3: Wait for indexer to catch up
+    if (!currentState.indexerCaughtUp) {
       await waitForIndexerCatchUp(30000);
     }
 
-    // Phase 2: Run data migrations (populate derived tables)
-    logger.info('Starting derived table migration...');
+    // Step 4: Run data migrations
+    logger.info('Starting data migrations...');
     await setPhase('migrating');
 
     // Run SQL data migrations
@@ -61,7 +67,6 @@ async function main() {
 
     logger.info('Migration complete!');
 
-    // Phase 3: Enter monitoring mode
     await monitorSystem();
   } catch (err) {
     logger.error(err, 'Orchestrator fatal error');
