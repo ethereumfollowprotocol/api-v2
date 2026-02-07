@@ -119,7 +119,7 @@ export async function getNotifications(
     JOIN efp_lists el ON
       el.list_storage_location_chain_id = le.chain_id
       AND el.list_storage_location_contract_address = le.contract_address
-      AND encode(el.list_storage_location_slot, 'hex') = substring(le.slot, 3)
+      AND convert_from(el.list_storage_location_slot, 'UTF8') = le.slot
     JOIN efp_account_metadata am ON
       am.address = el."user"
       AND am.key = 'primary-list'
