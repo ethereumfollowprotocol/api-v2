@@ -30,8 +30,9 @@ function getCacheKey(request: FastifyRequest): string {
   // Include query params in cache key
   const url = new URL(request.url, 'http://localhost');
   const params = new URLSearchParams(url.search);
-  // Remove cache param from key
+  // Remove cache bypass params from key
   params.delete('cache');
+  params.delete('live');
   const search = params.toString();
   return `efp:${url.pathname}${search ? '?' + search : ''}`;
 }
@@ -63,9 +64,9 @@ export async function cacheMiddleware(
     return;
   }
 
-  // Skip if cache=fresh is set
+  // Skip if cache=fresh or live=true is set
   const url = new URL(request.url, 'http://localhost');
-  if (url.searchParams.get('cache') === 'fresh') {
+  if (url.searchParams.get('cache') === 'fresh' || url.searchParams.get('live') === 'true') {
     reply.header('X-Cache', 'BYPASS');
     return;
   }
