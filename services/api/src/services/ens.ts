@@ -1,3 +1,4 @@
+import { normalize } from 'viem/ens';
 import { query, type Address, type ENSProfile, createLogger } from '@efp/shared';
 
 const logger = createLogger('ens-service');
@@ -21,6 +22,17 @@ export async function getENSProfile(address: Address): Promise<ENSProfile | unde
 
   const row = result.rows[0];
   if (!row || !row.name) {
+    return undefined;
+  }
+
+  // Defense in depth: validate stored name is normalized
+  // This catches any invalid names stored before the sync-ens-metadata fix
+  try {
+    if (row.name !== normalize(row.name)) {
+      return undefined;
+    }
+  } catch {
+    // Normalization failed, invalid name
     return undefined;
   }
 
@@ -80,6 +92,21 @@ export async function getENSProfiles(
     const addr = row.address.toLowerCase() as Address;
 
     if (!row.name) {
+      profiles.set(addr, undefined);
+      continue;
+    }
+
+    // Defense in depth: validate stored name is normalized
+    let isValidName = true;
+    try {
+      if (row.name !== normalize(row.name)) {
+        isValidName = false;
+      }
+    } catch {
+      isValidName = false;
+    }
+
+    if (!isValidName) {
       profiles.set(addr, undefined);
       continue;
     }

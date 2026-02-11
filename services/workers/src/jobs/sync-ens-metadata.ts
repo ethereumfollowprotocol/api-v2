@@ -62,6 +62,43 @@ export async function handleSyncENSMetadata(
       return;
     }
 
+    // Validate that the name is properly normalized (e.g., reject "MetaMask.eth")
+    let normalizedName: string;
+    try {
+      normalizedName = normalize(name);
+    } catch {
+      // Normalization failed, treat as no ENS name
+      logger.warn({ address, name }, 'ENS name failed normalization, treating as no name');
+      await query(
+        `
+        INSERT INTO ens_metadata (address, name, resolved_at, updated_at)
+        VALUES ($1, NULL, NOW(), NOW())
+        ON CONFLICT (address) DO UPDATE SET
+          name = NULL,
+          resolved_at = NOW(),
+          updated_at = NOW()
+      `,
+        [address]
+      );
+      return;
+    }
+
+    if (name !== normalizedName) {
+      logger.warn({ address, name, normalizedName }, 'Invalid unnormalized ENS name detected, treating as no name');
+      await query(
+        `
+        INSERT INTO ens_metadata (address, name, resolved_at, updated_at)
+        VALUES ($1, NULL, NOW(), NOW())
+        ON CONFLICT (address) DO UPDATE SET
+          name = NULL,
+          resolved_at = NOW(),
+          updated_at = NOW()
+      `,
+        [address]
+      );
+      return;
+    }
+
     // All ENS text record keys to fetch
     const textRecordKeys = [
       'url',
@@ -87,8 +124,7 @@ export async function handleSyncENSMetadata(
       'network.dm3.deliveryService',
     ];
 
-    // Fetch avatar and all text records in parallel
-    const normalizedName = normalize(name);
+    // Fetch avatar and all text records in parallel (normalizedName already validated above)
     const [avatar, ...textRecordValues] = await Promise.all([
       client.getEnsAvatar({ name: normalizedName }).catch(() => null),
       ...textRecordKeys.map((key) =>
