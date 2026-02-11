@@ -77,8 +77,23 @@ export async function buildApp() {
   await app.register(slotsRoutes, { prefix: '/api/v1' });
   await app.register(exportRoutes, { prefix: '/api/v1' });
 
-  // Also register at root for backwards compat
+  // Also register health routes at root for backwards compat
   await app.register(healthRoutes);
+
+  // API info endpoint
+  app.get('/api/v1', async () => {
+    return {
+      name: 'efp-public-api',
+      version: 'v1',
+      docs: 'https://docs.ethfollow.xyz/api',
+      source: 'https://github.com/ethereumfollowprotocol/api',
+    };
+  });
+
+  // Root redirect to /api/v1
+  app.get('/', async (request, reply) => {
+    return reply.redirect(301, '/api/v1');
+  });
 
   // Error handler
   app.setErrorHandler((error, request, reply) => {
