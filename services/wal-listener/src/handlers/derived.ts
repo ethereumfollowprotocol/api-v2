@@ -1,5 +1,4 @@
 import { deleteCachePattern, createLogger } from '@efp/shared';
-import { publishESUserSync } from './jobs.js';
 
 const logger = createLogger('derived-handlers');
 
@@ -33,10 +32,6 @@ export async function handleFollowersChange(
       logger.debug({ pattern, count: deleted }, 'Invalidated cache keys');
     }
   }
-
-  // Queue ES sync for affected addresses
-  await publishESUserSync(followers.address);
-  await publishESUserSync(followers.follower_address);
 }
 
 export async function handleFollowingChange(

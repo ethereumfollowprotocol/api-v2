@@ -11,7 +11,6 @@ import { handleCalculateMutuals } from './jobs/calculate-mutuals.js';
 import { handleUpdateLeaderboardEntry } from './jobs/update-leaderboard-entry.js';
 import { handleUpdateLeaderboardFull } from './jobs/update-leaderboard-full.js';
 import { handleSyncENSMetadata } from './jobs/sync-ens-metadata.js';
-import { handleSyncUserToElasticsearch } from './jobs/sync-user-to-elasticsearch.js';
 import { handleResyncUserRelationships } from './jobs/resync-user-relationships.js';
 import { handleEnsureUserStats } from './jobs/ensure-user-stats.js';
 import { handleBatchReconcileStats } from './jobs/batch-reconcile-stats.js';
@@ -28,7 +27,6 @@ const jobConfigs: Record<string, Partial<PgBoss.WorkOptions>> = {
   'update-leaderboard-entry': { teamSize: 2, teamConcurrency: 2 },
   'update-leaderboard-full': { teamSize: 1, teamConcurrency: 1 },
   'sync-ens-metadata': { teamSize: 10, teamConcurrency: 10 },
-  'sync-user-to-elasticsearch': { teamSize: 3, teamConcurrency: 3 },
   'resync-user-relationships': { teamSize: 1, teamConcurrency: 1 },
   'ensure-user-stats': { teamSize: 5, teamConcurrency: 5 },
   'batch-reconcile-stats': { teamSize: 1, teamConcurrency: 1 },
@@ -77,7 +75,6 @@ async function main() {
     ['update-leaderboard-entry', handleUpdateLeaderboardEntry],
     ['update-leaderboard-full', handleUpdateLeaderboardFull],
     ['sync-ens-metadata', handleSyncENSMetadata],
-    ['sync-user-to-elasticsearch', handleSyncUserToElasticsearch],
     ['resync-user-relationships', handleResyncUserRelationships],
     ['ensure-user-stats', handleEnsureUserStats],
     ['batch-reconcile-stats', handleBatchReconcileStats],
