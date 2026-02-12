@@ -33,6 +33,7 @@ interface NotificationsOptions {
   opcode: number; // 0=all, 1=follow, 2=unfollow, 3=tag, 4=untag
   interval: string; // PostgreSQL interval e.g. '168 hours'
   tag: string; // 'p_tag_empty' for all, or specific tag
+  start?: number; // Unix timestamp in seconds - upper bound for notifications
 }
 
 function opcodeToAction(opcode: number): string {
@@ -70,7 +71,7 @@ export async function getNotifications(
   targetAddress: Address,
   options: NotificationsOptions
 ): Promise<NotificationsResult> {
-  const { limit, offset, opcode, interval, tag } = options;
+  const { limit, offset, opcode, interval, tag, start } = options;
 
   // Build opcode filter condition
   // Opcode is at position 5-6 in the hex string (0x + version(2) + opcode(2))
@@ -81,6 +82,9 @@ export async function getNotifications(
     opcodeFilter = `AND substring(le.op, 5, 2) = '${opcodeHex}'`;
   }
 
+  // Calculate start timestamp - default to now if not provided
+  const startTimestamp = start ?? Math.floor(Date.now() / 1000);
+  const startDate = new Date(startTimestamp * 1000);
 
   const result = await query<{
     user_address: string;
@@ -103,7 +107,8 @@ export async function getNotifications(
         ('x' || substring(e.event_args->>'op', 5, 2))::bit(8)::int as opcode
       FROM events e
       WHERE e.event_name = 'ListOp'
-        AND e.block_timestamp >= NOW() - $3::interval
+        AND e.block_timestamp <= $5
+        AND e.block_timestamp >= $5 - $3::interval
         -- Use indexed target_address column
         AND e.target_address = $4
     )
@@ -130,7 +135,7 @@ export async function getNotifications(
     ORDER BY le.block_timestamp DESC
     LIMIT $1 OFFSET $2
     `,
-    [limit, offset, interval, targetAddress.toLowerCase()]
+    [limit, offset, interval, targetAddress.toLowerCase(), startDate]
   );
 
   // Process results

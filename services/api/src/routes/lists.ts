@@ -18,7 +18,19 @@ interface PaginationQuery {
   offset?: string;
   sort?: string;
   tags?: string;
-  include?: string;
+  include?: string | string[];
+}
+
+// Helper to parse include parameter (can be string or array)
+// Accepts: ?include=ens&include=mutuals or ?include=ens,mutuals
+function parseIncludeParam(include?: string | string[]): Set<string> {
+  if (!include) return new Set();
+  if (Array.isArray(include)) {
+    // Multiple query params: ?include=ens&include=mutuals
+    return new Set(include.flatMap((v) => v.split(',')).map((v) => v.trim().toLowerCase()));
+  }
+  // Single param: ?include=ens,mutuals or ?include=ens
+  return new Set(include.split(',').map((v) => v.trim().toLowerCase()));
 }
 
 // Get list info by token ID
@@ -182,13 +194,17 @@ export async function listsRoutes(app: FastifyInstance) {
 
       const address = list.user || list.owner;
       const { limit = '10', offset = '0', sort = 'latest', tags, include } = request.query;
+      const includeSet = parseIncludeParam(include);
 
       const followers = await getFollowers(address, {
         limit: Math.min(parseInt(limit, 10) || 10, 100),
         offset: parseInt(offset, 10) || 0,
         sort: sort as 'latest' | 'followers' | 'earliest',
         tags: tags?.split(',').filter(Boolean),
-        includeENS: include?.includes('ens'),
+        includeENS: includeSet.has('ens'),
+        includeMutuals: includeSet.has('mutuals'),
+        includeBlocked: includeSet.has('blocked'),
+        includeMuted: includeSet.has('muted'),
       });
 
       return { followers };
@@ -208,13 +224,17 @@ export async function listsRoutes(app: FastifyInstance) {
 
       const address = list.user || list.owner;
       const { limit = '10', offset = '0', sort = 'latest', tags, include } = request.query;
+      const includeSet = parseIncludeParam(include);
 
       const following = await getFollowing(address, {
         limit: Math.min(parseInt(limit, 10) || 10, 100),
         offset: parseInt(offset, 10) || 0,
         sort: sort as 'latest' | 'followers' | 'earliest',
         tags: tags?.split(',').filter(Boolean),
-        includeENS: include?.includes('ens'),
+        includeENS: includeSet.has('ens'),
+        includeMutuals: includeSet.has('mutuals'),
+        includeBlocked: includeSet.has('blocked'),
+        includeMuted: includeSet.has('muted'),
       });
 
       return { following };
@@ -236,6 +256,7 @@ export async function listsRoutes(app: FastifyInstance) {
 
       const address = list.user || list.owner;
       const { limit, offset = '0', sort = 'latest', tags, include } = request.query;
+      const includeSet = parseIncludeParam(include);
 
       // If limit is provided, use it; otherwise return all (up to 10000)
       const effectiveLimit = limit ? Math.min(parseInt(limit, 10) || 10000, 10000) : 10000;
@@ -255,6 +276,25 @@ export async function listsRoutes(app: FastifyInstance) {
         }
       }
 
+      // By default, exclude blocked/muted entries unless explicitly requested
+      let blockedMutedFilter = '';
+      if (!includeSet.has('blocked') && !includeSet.has('muted')) {
+        blockedMutedFilter = 'AND f.is_blocked = FALSE AND f.is_muted = FALSE';
+      } else if (!includeSet.has('blocked')) {
+        blockedMutedFilter = 'AND f.is_blocked = FALSE';
+      } else if (!includeSet.has('muted')) {
+        blockedMutedFilter = 'AND f.is_muted = FALSE';
+      }
+
+      // Include is_mutual in query if requested
+      const mutualSelect = includeSet.has('mutuals')
+        ? `, EXISTS (
+            SELECT 1 FROM efp_mutuals m
+            WHERE (m.address_a = $1 AND m.address_b = f.follower_address)
+               OR (m.address_b = $1 AND m.address_a = f.follower_address)
+          ) as is_mutual`
+        : '';
+
       const result = await query<{
         follower_address: string;
         follower_list_id: string;
@@ -263,6 +303,7 @@ export async function listsRoutes(app: FastifyInstance) {
         is_muted: boolean;
         updated_at: Date;
         is_following: boolean;
+        is_mutual?: boolean;
       }>(
         `
         SELECT
@@ -277,33 +318,40 @@ export async function listsRoutes(app: FastifyInstance) {
             WHERE fw.address = $1 AND fw.following_address = f.follower_address
               AND fw.is_blocked = FALSE AND fw.is_muted = FALSE
           ) as is_following
+          ${mutualSelect}
         FROM efp_followers f
-        WHERE f.address = $1 ${tagFilter}
+        WHERE f.address = $1 ${tagFilter} ${blockedMutedFilter}
         ORDER BY f.updated_at ${sortDirection}
         LIMIT $2 OFFSET $3
         `,
         params
       );
 
-      const followers = result.rows.map((row) => ({
-        efp_list_nft_token_id: row.follower_list_id,
-        address: row.follower_address.toLowerCase() as Address,
-        tags: row.tags || [],
-        is_following: row.is_following,
-        is_blocked: row.is_blocked,
-        is_muted: row.is_muted,
-        updated_at: row.updated_at.toISOString(),
-      }));
+      const followers = result.rows.map((row) => {
+        const entry: Record<string, unknown> = {
+          efp_list_nft_token_id: row.follower_list_id,
+          address: row.follower_address.toLowerCase() as Address,
+          tags: row.tags || [],
+          is_following: row.is_following,
+          is_blocked: row.is_blocked,
+          is_muted: row.is_muted,
+          updated_at: row.updated_at.toISOString(),
+        };
+        if (includeSet.has('mutuals') && row.is_mutual !== undefined) {
+          entry.is_mutual = row.is_mutual;
+        }
+        return entry;
+      });
 
       // Add ENS data if requested
-      if (include?.includes('ens') && followers.length > 0) {
-        const addresses = followers.map((f) => f.address);
+      if (includeSet.has('ens') && followers.length > 0) {
+        const addresses = followers.map((f) => f.address as Address);
         const ensProfiles = await getENSProfiles(addresses);
 
         for (const follower of followers) {
-          const profile = ensProfiles.get(follower.address);
+          const profile = ensProfiles.get(follower.address as Address);
           if (profile) {
-            (follower as Record<string, unknown>).ens = profile;
+            follower.ens = profile;
           }
         }
       }
@@ -327,6 +375,7 @@ export async function listsRoutes(app: FastifyInstance) {
 
       const address = list.user || list.owner;
       const { limit, offset = '0', sort = 'latest', tags, include } = request.query;
+      const includeSet = parseIncludeParam(include);
 
       // If limit is provided, use it; otherwise return all (up to 10000)
       const effectiveLimit = limit ? Math.min(parseInt(limit, 10) || 10000, 10000) : 10000;
@@ -346,18 +395,46 @@ export async function listsRoutes(app: FastifyInstance) {
         }
       }
 
+      // By default, exclude blocked/muted entries unless explicitly requested
+      let blockedMutedFilter = '';
+      if (!includeSet.has('blocked') && !includeSet.has('muted')) {
+        blockedMutedFilter = 'AND f.is_blocked = FALSE AND f.is_muted = FALSE';
+      } else if (!includeSet.has('blocked')) {
+        blockedMutedFilter = 'AND f.is_blocked = FALSE';
+      } else if (!includeSet.has('muted')) {
+        blockedMutedFilter = 'AND f.is_muted = FALSE';
+      }
+
+      // Include is_mutual in query if requested
+      const mutualSelect = includeSet.has('mutuals')
+        ? `, EXISTS (
+            SELECT 1 FROM efp_mutuals m
+            WHERE (m.address_a = $1 AND m.address_b = f.following_address)
+               OR (m.address_b = $1 AND m.address_a = f.following_address)
+          ) as is_mutual`
+        : '';
+
+      // Select is_blocked and is_muted if including them
+      const blockedMutedSelect = (includeSet.has('blocked') || includeSet.has('muted'))
+        ? ', f.is_blocked, f.is_muted'
+        : '';
+
       const result = await query<{
         following_address: string;
         tags: string[];
+        is_mutual?: boolean;
+        is_blocked?: boolean;
+        is_muted?: boolean;
       }>(
         `
         SELECT
           f.following_address,
           f.tags
+          ${mutualSelect}
+          ${blockedMutedSelect}
         FROM efp_following f
         WHERE f.address = $1
-          AND f.is_blocked = FALSE
-          AND f.is_muted = FALSE
+          ${blockedMutedFilter}
           ${tagFilter}
         ORDER BY f.created_at ${sortDirection}
         LIMIT $2 OFFSET $3
@@ -365,23 +442,35 @@ export async function listsRoutes(app: FastifyInstance) {
         params
       );
 
-      const following = result.rows.map((row) => ({
-        version: 1,
-        record_type: 'address',
-        data: row.following_address.toLowerCase() as Address,
-        address: row.following_address.toLowerCase() as Address,
-        tags: row.tags || [],
-      }));
+      const following = result.rows.map((row) => {
+        const entry: Record<string, unknown> = {
+          version: 1,
+          record_type: 'address',
+          data: row.following_address.toLowerCase() as Address,
+          address: row.following_address.toLowerCase() as Address,
+          tags: row.tags || [],
+        };
+        if (includeSet.has('mutuals') && row.is_mutual !== undefined) {
+          entry.is_mutual = row.is_mutual;
+        }
+        if (includeSet.has('blocked') && row.is_blocked !== undefined) {
+          entry.is_blocked = row.is_blocked;
+        }
+        if (includeSet.has('muted') && row.is_muted !== undefined) {
+          entry.is_muted = row.is_muted;
+        }
+        return entry;
+      });
 
       // Add ENS data if requested
-      if (include?.includes('ens') && following.length > 0) {
-        const addresses = following.map((f) => f.address);
+      if (includeSet.has('ens') && following.length > 0) {
+        const addresses = following.map((f) => f.address as Address);
         const ensProfiles = await getENSProfiles(addresses);
 
         for (const entry of following) {
-          const profile = ensProfiles.get(entry.address);
+          const profile = ensProfiles.get(entry.address as Address);
           if (profile) {
-            (entry as Record<string, unknown>).ens = profile;
+            entry.ens = profile;
           }
         }
       }
@@ -392,10 +481,15 @@ export async function listsRoutes(app: FastifyInstance) {
 
   // GET /lists/:tokenId/records (P2)
   // Response shape must match production: { records: [{ version, record_type: "address", data, tags }] }
-  app.get<{ Params: TokenParams }>(
+  // Optional `includeTags=false` to skip tag fetching for optimization
+  app.get<{ Params: TokenParams; Querystring: { includeTags?: string } }>(
     '/lists/:tokenId/records',
     async (request, reply) => {
       const { tokenId } = request.params;
+      const { includeTags } = request.query;
+
+      // Default to true, only skip if explicitly set to 'false'
+      const shouldIncludeTags = includeTags !== 'false';
 
       // Get list storage location
       const listResult = await query<{
@@ -415,26 +509,6 @@ export async function listsRoutes(app: FastifyInstance) {
       const { list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot } =
         listResult.rows[0];
 
-      // Get records with their tags
-      const recordsResult = await query<{
-        record_version: number;
-        record_type: number;
-        record_data: string;
-        tags: string[] | null;
-      }>(
-        `SELECT r.record_version, r.record_type, convert_from(r.record_data, 'UTF8') as record_data,
-                array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL) as tags
-         FROM efp_list_records r
-         LEFT JOIN efp_list_record_tags t ON
-           t.chain_id = r.chain_id AND
-           t.contract_address = r.contract_address AND
-           t.slot = r.slot AND
-           t.record = r.record
-         WHERE r.chain_id = $1 AND r.contract_address = $2 AND r.slot = $3
-         GROUP BY r.record_version, r.record_type, r.record_data, r.record`,
-        [list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot]
-      );
-
       // Map record_type number to string
       const recordTypeMap: Record<number, string> = {
         1: 'address',
@@ -442,14 +516,56 @@ export async function listsRoutes(app: FastifyInstance) {
         3: 'list',
       };
 
-      const records = recordsResult.rows.map((row) => ({
-        version: row.record_version,
-        record_type: recordTypeMap[row.record_type] || 'unknown',
-        data: row.record_data,
-        tags: row.tags,
-      }));
+      if (shouldIncludeTags) {
+        // Get records with their tags (default behavior)
+        const recordsResult = await query<{
+          record_version: number;
+          record_type: number;
+          record_data: string;
+          tags: string[] | null;
+        }>(
+          `SELECT r.record_version, r.record_type, convert_from(r.record_data, 'UTF8') as record_data,
+                  array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL) as tags
+           FROM efp_list_records r
+           LEFT JOIN efp_list_record_tags t ON
+             t.chain_id = r.chain_id AND
+             t.contract_address = r.contract_address AND
+             t.slot = r.slot AND
+             t.record = r.record
+           WHERE r.chain_id = $1 AND r.contract_address = $2 AND r.slot = $3
+           GROUP BY r.record_version, r.record_type, r.record_data, r.record`,
+          [list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot]
+        );
 
-      return { records };
+        const records = recordsResult.rows.map((row) => ({
+          version: row.record_version,
+          record_type: recordTypeMap[row.record_type] || 'unknown',
+          data: row.record_data,
+          tags: row.tags,
+        }));
+
+        return { records };
+      } else {
+        // Get records without tags (optimized)
+        const recordsResult = await query<{
+          record_version: number;
+          record_type: number;
+          record_data: string;
+        }>(
+          `SELECT r.record_version, r.record_type, convert_from(r.record_data, 'UTF8') as record_data
+           FROM efp_list_records r
+           WHERE r.chain_id = $1 AND r.contract_address = $2 AND r.slot = $3`,
+          [list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot]
+        );
+
+        const records = recordsResult.rows.map((row) => ({
+          version: row.record_version,
+          record_type: recordTypeMap[row.record_type] || 'unknown',
+          data: row.record_data,
+        }));
+
+        return { records };
+      }
     }
   );
 
@@ -466,12 +582,16 @@ export async function listsRoutes(app: FastifyInstance) {
 
       const address = list.user || list.owner;
       const { limit = '10', offset = '0', include } = request.query;
+      const includeSet = parseIncludeParam(include);
 
       const followers = await getFollowers(address, {
         limit: Math.min(parseInt(limit, 10) || 10, 100),
         offset: parseInt(offset, 10) || 0,
         sort: 'latest',
-        includeENS: include?.includes('ens'),
+        includeENS: includeSet.has('ens'),
+        includeMutuals: includeSet.has('mutuals'),
+        includeBlocked: includeSet.has('blocked'),
+        includeMuted: includeSet.has('muted'),
       });
 
       return { followers };
@@ -604,17 +724,20 @@ export async function listsRoutes(app: FastifyInstance) {
   );
 
   // GET /lists/:tokenId/tags (P2)
-  app.get<{ Params: TokenParams }>(
+  // When `include` param is provided (comma-separated tags), returns filtered results
+  // with different response shape: { token_id, tagsToSearch, taggedAddresses }
+  app.get<{ Params: TokenParams; Querystring: { include?: string; cache?: string } }>(
     '/lists/:tokenId/tags',
     async (request, reply) => {
       const { tokenId } = request.params;
+      const { include } = request.query;
       const list = await getListInfo(tokenId);
 
       if (!list) {
         return reply.status(404).send({ response: 'List not found' });
       }
 
-      // Get all tags used by this list
+      // Get list storage location
       const listResult = await query<{
         list_storage_location_chain_id: number;
         list_storage_location_contract_address: string;
@@ -632,6 +755,41 @@ export async function listsRoutes(app: FastifyInstance) {
       const { list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot } =
         listResult.rows[0];
 
+      // Parse and validate include filter (only letters allowed, like V1)
+      const onlyLettersPattern = /^[A-Za-z]+$/;
+      let tagsToSearch: string[] = [];
+      if (include) {
+        tagsToSearch = include.split(',').filter((tag) => tag.match(onlyLettersPattern));
+      }
+
+      // If filtering by specific tags, return filtered response
+      if (tagsToSearch.length > 0) {
+        const taggedAddressesResult = await query<{ tag: string; record_data: string }>(
+          `SELECT t.tag, convert_from(r.record_data, 'UTF8') as record_data
+           FROM efp_list_record_tags t
+           JOIN efp_list_records r ON
+             r.chain_id = t.chain_id AND
+             r.contract_address = t.contract_address AND
+             r.slot = t.slot AND
+             r.record = t.record
+           WHERE t.chain_id = $1 AND t.contract_address = $2 AND t.slot = $3
+             AND t.tag = ANY($4)`,
+          [list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot, tagsToSearch]
+        );
+
+        const taggedAddresses = taggedAddressesResult.rows.map((r) => ({
+          address: r.record_data.toLowerCase(),
+          tag: r.tag,
+        }));
+
+        return {
+          token_id: tokenId,
+          tagsToSearch,
+          taggedAddresses,
+        };
+      }
+
+      // Default behavior: return all tags
       const tagsResult = await query<{ tag: string; count: string }>(
         `SELECT tag, COUNT(*)::TEXT as count
          FROM efp_list_record_tags

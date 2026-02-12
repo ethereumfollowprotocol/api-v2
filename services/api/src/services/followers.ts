@@ -9,6 +9,9 @@ interface FollowersOptions {
   sort: 'latest' | 'followers' | 'earliest';
   tags?: string[];
   includeENS?: boolean;
+  includeMutuals?: boolean;
+  includeBlocked?: boolean;
+  includeMuted?: boolean;
 }
 
 interface AllFollowersOptions {
@@ -36,7 +39,7 @@ export async function getFollowers(
   address: Address,
   options: FollowersOptions
 ): Promise<FollowerEntry[]> {
-  const { limit, offset, sort, tags, includeENS } = options;
+  const { limit, offset, sort, tags, includeENS, includeMutuals, includeBlocked, includeMuted } = options;
 
   let tagFilter = '';
   const params: unknown[] = [address, limit, offset];
@@ -46,7 +49,30 @@ export async function getFollowers(
     params.push(tags);
   }
 
+  // By default, exclude blocked/muted entries unless explicitly requested
+  let blockedMutedFilter = '';
+  if (!includeBlocked && !includeMuted) {
+    // Default: exclude both blocked and muted
+    blockedMutedFilter = 'AND f.is_blocked = FALSE AND f.is_muted = FALSE';
+  } else if (!includeBlocked) {
+    // Only exclude blocked
+    blockedMutedFilter = 'AND f.is_blocked = FALSE';
+  } else if (!includeMuted) {
+    // Only exclude muted
+    blockedMutedFilter = 'AND f.is_muted = FALSE';
+  }
+  // If both includeBlocked and includeMuted are true, include all
+
   const sortClause = getSortClause(sort);
+
+  // Include is_mutual in query if requested
+  const mutualSelect = includeMutuals
+    ? `, EXISTS (
+        SELECT 1 FROM efp_mutuals m
+        WHERE (m.address_a = $1 AND m.address_b = f.follower_address)
+           OR (m.address_b = $1 AND m.address_a = f.follower_address)
+      ) as is_mutual`
+    : '';
 
   const result = await query<{
     follower_address: string;
@@ -56,6 +82,7 @@ export async function getFollowers(
     is_muted: boolean;
     updated_at: Date;
     is_following: boolean;
+    is_mutual?: boolean;
   }>(
     `
     SELECT
@@ -70,24 +97,31 @@ export async function getFollowers(
         WHERE fw.address = $1 AND fw.following_address = f.follower_address
           AND fw.is_blocked = FALSE AND fw.is_muted = FALSE
       ) as is_following
+      ${mutualSelect}
     FROM efp_followers f
     LEFT JOIN efp_user_stats us ON us.address = f.follower_address
-    WHERE f.address = $1 ${tagFilter}
+    WHERE f.address = $1 ${tagFilter} ${blockedMutedFilter}
     ${sortClause}
     LIMIT $2 OFFSET $3
   `,
     params
   );
 
-  const followers: FollowerEntry[] = result.rows.map((row) => ({
-    efp_list_nft_token_id: row.follower_list_id,
-    address: row.follower_address.toLowerCase() as Address,
-    tags: row.tags || [],
-    is_following: row.is_following,
-    is_blocked: row.is_blocked,
-    is_muted: row.is_muted,
-    updated_at: row.updated_at.toISOString(),
-  }));
+  const followers: FollowerEntry[] = result.rows.map((row) => {
+    const entry: FollowerEntry = {
+      efp_list_nft_token_id: row.follower_list_id,
+      address: row.follower_address.toLowerCase() as Address,
+      tags: row.tags || [],
+      is_following: row.is_following,
+      is_blocked: row.is_blocked,
+      is_muted: row.is_muted,
+      updated_at: row.updated_at.toISOString(),
+    };
+    if (includeMutuals && row.is_mutual !== undefined) {
+      (entry as FollowerEntry & { is_mutual: boolean }).is_mutual = row.is_mutual;
+    }
+    return entry;
+  });
 
   // Add ENS data if requested
   if (includeENS && followers.length > 0) {
@@ -122,7 +156,7 @@ export async function getFollowing(
   address: Address,
   options: FollowersOptions
 ): Promise<FollowingEntry[]> {
-  const { limit, offset, sort, tags, includeENS } = options;
+  const { limit, offset, sort, tags, includeENS, includeMutuals, includeBlocked, includeMuted } = options;
 
   let tagFilter = '';
   const params: unknown[] = [address, limit, offset];
@@ -132,25 +166,57 @@ export async function getFollowing(
     params.push(tags);
   }
 
+  // By default, exclude blocked/muted entries unless explicitly requested
+  let blockedMutedFilter = '';
+  if (!includeBlocked && !includeMuted) {
+    // Default: exclude both blocked and muted
+    blockedMutedFilter = 'AND f.is_blocked = FALSE AND f.is_muted = FALSE';
+  } else if (!includeBlocked) {
+    // Only exclude blocked
+    blockedMutedFilter = 'AND f.is_blocked = FALSE';
+  } else if (!includeMuted) {
+    // Only exclude muted
+    blockedMutedFilter = 'AND f.is_muted = FALSE';
+  }
+  // If both includeBlocked and includeMuted are true, include all
+
   const sortClause = sort === 'followers'
     ? 'ORDER BY COALESCE(us.followers_count, 0) DESC'
     : sort === 'earliest'
     ? 'ORDER BY f.created_at ASC'
     : 'ORDER BY f.created_at DESC';
 
+  // Include is_mutual in query if requested
+  const mutualSelect = includeMutuals
+    ? `, EXISTS (
+        SELECT 1 FROM efp_mutuals m
+        WHERE (m.address_a = $1 AND m.address_b = f.following_address)
+           OR (m.address_b = $1 AND m.address_a = f.following_address)
+      ) as is_mutual`
+    : '';
+
+  // Select is_blocked and is_muted if including them
+  const blockedMutedSelect = (includeBlocked || includeMuted)
+    ? ', f.is_blocked, f.is_muted'
+    : '';
+
   const result = await query<{
     following_address: string;
     tags: string[];
+    is_mutual?: boolean;
+    is_blocked?: boolean;
+    is_muted?: boolean;
   }>(
     `
     SELECT
       f.following_address,
       f.tags
+      ${mutualSelect}
+      ${blockedMutedSelect}
     FROM efp_following f
     LEFT JOIN efp_user_stats us ON us.address = f.following_address
     WHERE f.address = $1
-      AND f.is_blocked = FALSE
-      AND f.is_muted = FALSE
+      ${blockedMutedFilter}
       ${tagFilter}
     ${sortClause}
     LIMIT $2 OFFSET $3
@@ -158,13 +224,25 @@ export async function getFollowing(
     params
   );
 
-  const following: FollowingEntry[] = result.rows.map((row) => ({
-    version: 1,
-    record_type: 'address',
-    data: row.following_address.toLowerCase() as Address,
-    address: row.following_address.toLowerCase() as Address,
-    tags: row.tags || [],
-  }));
+  const following: FollowingEntry[] = result.rows.map((row) => {
+    const entry: FollowingEntry = {
+      version: 1,
+      record_type: 'address',
+      data: row.following_address.toLowerCase() as Address,
+      address: row.following_address.toLowerCase() as Address,
+      tags: row.tags || [],
+    };
+    if (includeMutuals && row.is_mutual !== undefined) {
+      (entry as FollowingEntry & { is_mutual: boolean }).is_mutual = row.is_mutual;
+    }
+    if (includeBlocked && row.is_blocked !== undefined) {
+      (entry as FollowingEntry & { is_blocked: boolean }).is_blocked = row.is_blocked;
+    }
+    if (includeMuted && row.is_muted !== undefined) {
+      (entry as FollowingEntry & { is_muted: boolean }).is_muted = row.is_muted;
+    }
+    return entry;
+  });
 
   // Add ENS data if requested
   if (includeENS && following.length > 0) {
