@@ -1,4 +1,4 @@
-import { convertHexToBigInt, createLogger } from '@efp/shared';
+import { convertHexToBigInt, createLogger, deleteCache } from '@efp/shared';
 import { publishResyncUserRelationships } from './jobs.js';
 
 const logger = createLogger('account-metadata-handler');
@@ -18,13 +18,18 @@ export async function handleAccountMetadataChange(
   // Only care about primary-list changes
   if (metadata.key !== 'primary-list') return;
 
+  const address = metadata.address.toLowerCase();
   const newPrimaryList = metadata.value ? Number(convertHexToBigInt(metadata.value)) : null;
 
-  // Queue a full resync job for this user
-  await publishResyncUserRelationships(metadata.address.toLowerCase(), newPrimaryList);
+  // Invalidate cache immediately so users see the new primary list
+  await deleteCache(`efp:/users/${address}/details`);
+  await deleteCache(`efp:/users/${address}/stats`);
+
+  // Queue a full resync job for this user's relationships
+  await publishResyncUserRelationships(address, newPrimaryList);
 
   logger.info(
-    { address: metadata.address, operation, newPrimaryList },
-    'Primary list changed, queued resync'
+    { address, operation, newPrimaryList },
+    'Primary list changed, invalidated cache and queued resync'
   );
 }
