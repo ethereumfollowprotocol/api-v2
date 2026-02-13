@@ -66,8 +66,20 @@ interface PaginationQuery {
   offset?: string;
   sort?: string;
   tags?: string;
-  include?: string;
+  include?: string | string[];
   cache?: string;
+}
+
+// Helper to parse include parameter (can be string or array)
+// Accepts: ?include=ens&include=mutuals or ?include=ens,mutuals
+function parseIncludeParam(include?: string | string[]): Set<string> {
+  if (!include) return new Set();
+  if (Array.isArray(include)) {
+    // Multiple query params: ?include=ens&include=mutuals
+    return new Set(include.flatMap((v) => v.split(',')).map((v) => v.trim().toLowerCase()));
+  }
+  // Single param: ?include=ens,mutuals or ?include=ens
+  return new Set(include.split(',').map((v) => v.trim().toLowerCase()));
 }
 
 // Helper to resolve address or return 400
@@ -177,13 +189,17 @@ export async function usersRoutes(app: FastifyInstance) {
       if (!address) return;
 
       const { limit = '10', offset = '0', sort = 'latest', tags, include } = request.query;
+      const includeSet = parseIncludeParam(include);
 
       const followers = await getFollowers(address, {
         limit: Math.min(parseInt(limit, 10) || 10, 100),
         offset: parseInt(offset, 10) || 0,
         sort: sort as 'latest' | 'followers' | 'earliest',
         tags: tags?.split(',').filter(Boolean),
-        includeENS: include?.includes('ens'),
+        includeENS: includeSet.has('ens'),
+        includeMutuals: includeSet.has('mutuals'),
+        includeBlocked: includeSet.has('blocked'),
+        includeMuted: includeSet.has('muted'),
       });
 
       return { followers };
@@ -198,13 +214,17 @@ export async function usersRoutes(app: FastifyInstance) {
       if (!address) return;
 
       const { limit = '10', offset = '0', sort = 'latest', tags, include } = request.query;
+      const includeSet = parseIncludeParam(include);
 
       const following = await getFollowing(address, {
         limit: Math.min(parseInt(limit, 10) || 10, 100),
         offset: parseInt(offset, 10) || 0,
         sort: sort as 'latest' | 'followers' | 'earliest',
         tags: tags?.split(',').filter(Boolean),
-        includeENS: include?.includes('ens'),
+        includeENS: includeSet.has('ens'),
+        includeMutuals: includeSet.has('mutuals'),
+        includeBlocked: includeSet.has('blocked'),
+        includeMuted: includeSet.has('muted'),
       });
 
       return { following };
@@ -220,6 +240,7 @@ export async function usersRoutes(app: FastifyInstance) {
       if (!address) return;
 
       const { limit, offset = '0', sort = 'latest', tags, include } = request.query;
+      const includeSet = parseIncludeParam(include);
 
       // If limit is provided, use it; otherwise return all (up to 10000)
       const effectiveLimit = limit ? Math.min(parseInt(limit, 10) || 10000, 10000) : 10000;
@@ -229,7 +250,10 @@ export async function usersRoutes(app: FastifyInstance) {
         offset: parseInt(offset, 10) || 0,
         sort: sort as 'latest' | 'followers' | 'earliest',
         tags: tags?.split(',').filter(Boolean),
-        includeENS: include?.includes('ens'),
+        includeENS: includeSet.has('ens'),
+        includeMutuals: includeSet.has('mutuals'),
+        includeBlocked: includeSet.has('blocked'),
+        includeMuted: includeSet.has('muted'),
       });
 
       return { followers };
@@ -245,6 +269,7 @@ export async function usersRoutes(app: FastifyInstance) {
       if (!address) return;
 
       const { limit, offset = '0', sort = 'latest', tags, include } = request.query;
+      const includeSet = parseIncludeParam(include);
 
       // If limit is provided, use it; otherwise return all (up to 10000)
       const effectiveLimit = limit ? Math.min(parseInt(limit, 10) || 10000, 10000) : 10000;
@@ -254,7 +279,10 @@ export async function usersRoutes(app: FastifyInstance) {
         offset: parseInt(offset, 10) || 0,
         sort: sort as 'latest' | 'followers' | 'earliest',
         tags: tags?.split(',').filter(Boolean),
-        includeENS: include?.includes('ens'),
+        includeENS: includeSet.has('ens'),
+        includeMutuals: includeSet.has('mutuals'),
+        includeBlocked: includeSet.has('blocked'),
+        includeMuted: includeSet.has('muted'),
       });
 
       return { following };
@@ -348,12 +376,16 @@ export async function usersRoutes(app: FastifyInstance) {
       if (!address) return;
 
       const { limit = '10', offset = '0', include } = request.query;
+      const includeSet = parseIncludeParam(include);
 
       const followers = await getFollowers(address, {
         limit: Math.min(parseInt(limit, 10) || 10, 100),
         offset: parseInt(offset, 10) || 0,
         sort: 'latest',
-        includeENS: include?.includes('ens'),
+        includeENS: includeSet.has('ens'),
+        includeMutuals: includeSet.has('mutuals'),
+        includeBlocked: includeSet.has('blocked'),
+        includeMuted: includeSet.has('muted'),
       });
 
       return { followers };
@@ -562,11 +594,23 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: { tag?: string; direction?: string; limit?: string; offset?: string } }>(
     '/users/:addressOrENS/relationships',
     async (request, reply) => {
-      const { tag, direction, limit = '100', offset = '0' } = request.query;
+      const { tag, limit = '100', offset = '0' } = request.query;
+      let { direction } = request.query;
+
+      // Map shorthand values: 'in' → 'incoming', 'out' → 'outgoing'
+      if (direction === 'in') direction = 'incoming';
+      if (direction === 'out') direction = 'outgoing';
 
       if (!tag || !direction) {
         return reply.status(400).send({
           message: 'Both "tag" and "direction" query parameters are required',
+        });
+      }
+
+      // Validate direction
+      if (direction !== 'incoming' && direction !== 'outgoing') {
+        return reply.status(400).send({
+          message: 'The "direction" parameter must be "incoming", "outgoing", "in", or "out"',
         });
       }
 
@@ -751,6 +795,7 @@ export async function usersRoutes(app: FastifyInstance) {
       interval?: string;
       opcode?: string;
       tag?: string;
+      start?: string;
     };
   }>('/users/:addressOrENS/notifications', async (request, reply) => {
     const address = await resolveAddress(request.params.addressOrENS, reply);
@@ -762,7 +807,13 @@ export async function usersRoutes(app: FastifyInstance) {
       interval = 'week',
       opcode = '0',
       tag = 'p_tag_empty',
+      start,
     } = request.query;
+
+    // Default start to current time (Unix timestamp in seconds) if not provided
+    const startTimestamp = start && start !== ''
+      ? parseInt(start, 10)
+      : Math.floor(Date.now() / 1000);
 
     // Convert interval keyword to PostgreSQL interval
     const intervalMap: Record<string, string> = {
@@ -780,6 +831,7 @@ export async function usersRoutes(app: FastifyInstance) {
       opcode: parseInt(opcode, 10) || 0,
       interval: pgInterval,
       tag,
+      start: startTimestamp,
     });
 
     return result;
