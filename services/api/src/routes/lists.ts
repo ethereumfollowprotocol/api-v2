@@ -122,8 +122,8 @@ export async function listsRoutes(app: FastifyInstance) {
 
       const address = list.user || list.owner;
 
-      // Get ENS and ranks
-      const [ens, ranksResult] = await Promise.all([
+      // Get ENS, ranks, and primary list
+      const [ens, ranksResult, primaryListResult] = await Promise.all([
         getENSProfile(address),
         query<{
           followers_rank: number | null;
@@ -136,7 +136,16 @@ export async function listsRoutes(app: FastifyInstance) {
            FROM efp_leaderboard WHERE address = $1`,
           [address]
         ),
+        query<{ value: string }>(
+          `SELECT value FROM efp_account_metadata WHERE address = $1 AND key = 'primary-list'`,
+          [address]
+        ),
       ]);
+
+      let primaryList: string | null = null;
+      if (primaryListResult.rows[0]?.value) {
+        primaryList = convertHexToBigInt(primaryListResult.rows[0].value).toString();
+      }
 
       return {
         address,
@@ -148,7 +157,7 @@ export async function listsRoutes(app: FastifyInstance) {
           top8_rank: toStringOrNull(ranksResult.rows[0]?.top8_rank),
           blocks_rank: ranksResult.rows[0]?.blocks_rank ?? 0,
         },
-        primary_list: tokenId,
+        primary_list: primaryList,
       };
     }
   );
