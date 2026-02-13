@@ -68,7 +68,7 @@ export async function handleResyncUserRelationships(
           list_storage_location_contract_address as contract_address,
           list_storage_location_slot as slot
         FROM efp_lists
-        WHERE token_id = $1 AND "user" = $2
+        WHERE token_id = $1 AND ("user" = $2 OR owner = $2)
       `,
         [newPrimaryList, address]
       );
