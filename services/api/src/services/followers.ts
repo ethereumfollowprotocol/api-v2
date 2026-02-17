@@ -575,7 +575,7 @@ export async function getListFollowing(
   }
 
   const sortClause = sort === 'followers'
-    ? 'ORDER BY COALESCE(us.followers_count, 0) DESC'
+    ? 'ORDER BY COALESCE(MAX(us.followers_count), 0) DESC'
     : sort === 'earliest'
     ? 'ORDER BY r.created_at ASC'
     : 'ORDER BY r.created_at DESC';
