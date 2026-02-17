@@ -614,7 +614,7 @@ export async function listsRoutes(app: FastifyInstance) {
       const followers = await searchFollowers(address, term, {
         limit: Math.min(parseInt(limit, 10) || 10, 100),
         offset: parseInt(offset, 10) || 0,
-        includeENS: include?.includes('ens'),
+        includeENS: true,
       });
 
       return { followers };
@@ -640,7 +640,7 @@ export async function listsRoutes(app: FastifyInstance) {
       const following = await searchListFollowing(tokenId, term, {
         limit: Math.min(parseInt(limit, 10) || 10, 100),
         offset: parseInt(offset, 10) || 0,
-        includeENS: include?.includes('ens'),
+        includeENS: true,
       });
 
       return { following };
