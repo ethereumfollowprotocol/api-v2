@@ -460,7 +460,7 @@ export async function usersRoutes(app: FastifyInstance) {
       const followers = await searchFollowers(address, term, {
         limit: Math.min(parseInt(limit, 10) || 10, 100),
         offset: parseInt(offset, 10) || 0,
-        includeENS: include?.includes('ens'),
+        includeENS: true,
       });
 
       return { followers };
@@ -483,7 +483,7 @@ export async function usersRoutes(app: FastifyInstance) {
       const following = await searchFollowing(address, term, {
         limit: Math.min(parseInt(limit, 10) || 10, 100),
         offset: parseInt(offset, 10) || 0,
-        includeENS: include?.includes('ens'),
+        includeENS: true,
       });
 
       return { following };
@@ -657,7 +657,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: { leader?: string; limit?: string; offset?: string } }>(
     '/users/:addressOrENS/commonFollowers',
     async (request, reply) => {
-      const { leader, limit = '10', offset = '0' } = request.query;
+      const { leader, limit, offset } = request.query;
 
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
@@ -671,18 +671,23 @@ export async function usersRoutes(app: FastifyInstance) {
         return reply.status(404).send({ response: 'ENS name not valid or does not exist' });
       }
 
-      const limitNum = Math.min(parseInt(limit, 10) || 10, 100);
-      const offsetNum = parseInt(offset, 10) || 0;
-
-      // Find users that both follow the leader and are followed by address
-      const result = await query<{
-        address: string;
-        name: string | null;
-        avatar: string | null;
-        header: string | null;
-        mutuals_rank: number | null;
-      }>(
+      // Count query for total
+      const countResult = await query<{ count: string }>(
         `
+        SELECT COUNT(*) as count
+        FROM efp_following f1
+        JOIN efp_followers f2 ON f2.follower_address = f1.following_address
+        WHERE f1.address = $1
+          AND f2.address = $2
+          AND f1.is_blocked = FALSE AND f1.is_muted = FALSE
+          AND f2.is_blocked = FALSE AND f2.is_muted = FALSE
+        `,
+        [address, leaderAddress]
+      );
+      const totalCount = parseInt(countResult.rows[0]?.count || '0', 10);
+
+      // Data query - only paginate when limit/offset are explicitly provided
+      let dataQuery = `
         SELECT
           f1.following_address as address,
           e.name,
@@ -690,7 +695,7 @@ export async function usersRoutes(app: FastifyInstance) {
           e.header,
           l.mutuals_rank
         FROM efp_following f1
-        JOIN efp_following f2 ON f2.following_address = f1.following_address
+        JOIN efp_followers f2 ON f2.follower_address = f1.following_address
         LEFT JOIN ens_metadata e ON e.address = f1.following_address
         LEFT JOIN efp_leaderboard l ON l.address = f1.following_address
         WHERE f1.address = $1
@@ -698,10 +703,23 @@ export async function usersRoutes(app: FastifyInstance) {
           AND f1.is_blocked = FALSE AND f1.is_muted = FALSE
           AND f2.is_blocked = FALSE AND f2.is_muted = FALSE
         ORDER BY l.mutuals_rank ASC NULLS LAST
-        LIMIT $3 OFFSET $4
-        `,
-        [address, leaderAddress, limitNum, offsetNum]
-      );
+      `;
+      const params: (string | number)[] = [address, leaderAddress];
+
+      if (limit || offset) {
+        const limitNum = Math.min(parseInt(limit || '10', 10) || 10, 100);
+        const offsetNum = parseInt(offset || '0', 10) || 0;
+        dataQuery += ' LIMIT $3 OFFSET $4';
+        params.push(limitNum, offsetNum);
+      }
+
+      const result = await query<{
+        address: string;
+        name: string | null;
+        avatar: string | null;
+        header: string | null;
+        mutuals_rank: number | null;
+      }>(dataQuery, params);
 
       return {
         results: result.rows.map((r) => ({
@@ -711,7 +729,7 @@ export async function usersRoutes(app: FastifyInstance) {
           header: r.header || '',
           mutuals_rank: parseInt(String(r.mutuals_rank), 10) || 0,
         })),
-        length: result.rows.length,
+        length: totalCount,
       };
     }
   );

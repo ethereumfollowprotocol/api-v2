@@ -507,6 +507,243 @@ export async function getListFollowingState(
   };
 }
 
+// Get list storage location from efp_lists
+async function getListStorageLocation(
+  tokenId: string
+): Promise<{ chain_id: number; contract_address: string; slot: string } | null> {
+  const result = await query<{
+    list_storage_location_chain_id: number;
+    list_storage_location_contract_address: string;
+    list_storage_location_slot: string;
+  }>(
+    `SELECT list_storage_location_chain_id, list_storage_location_contract_address, list_storage_location_slot
+     FROM efp_lists WHERE token_id = $1`,
+    [tokenId]
+  );
+
+  if (result.rows.length === 0) return null;
+
+  return {
+    chain_id: result.rows[0].list_storage_location_chain_id,
+    contract_address: result.rows[0].list_storage_location_contract_address,
+    slot: result.rows[0].list_storage_location_slot,
+  };
+}
+
+// Get following entries for a specific list by querying raw tables
+export async function getListFollowing(
+  tokenId: string,
+  options: FollowersOptions
+): Promise<FollowingEntry[]> {
+  const { limit, offset, sort, tags, includeENS, includeMutuals, includeBlocked, includeMuted } = options;
+
+  const loc = await getListStorageLocation(tokenId);
+  if (!loc) return [];
+
+  // Get the list owner for mutuals check
+  let listOwner: Address | null = null;
+  if (includeMutuals) {
+    const ownerResult = await query<{ user_address: string }>(
+      `SELECT COALESCE(l."user", l.owner) as user_address FROM efp_lists l WHERE l.token_id = $1`,
+      [tokenId]
+    );
+    listOwner = ownerResult.rows[0]?.user_address?.toLowerCase() as Address || null;
+  }
+
+  const params: unknown[] = [loc.chain_id, loc.contract_address, loc.slot, limit, offset];
+
+  let tagFilter = '';
+  if (tags && tags.length > 0) {
+    tagFilter = `HAVING array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL) && $${params.length + 1}`;
+    params.push(tags);
+  }
+
+  // Build HAVING clause for block/mute filtering
+  const havingClauses: string[] = [];
+  if (!includeBlocked) {
+    havingClauses.push(`NOT COALESCE('block' = ANY(array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL)), FALSE)`);
+  }
+  if (!includeMuted) {
+    havingClauses.push(`NOT COALESCE('mute' = ANY(array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL)), FALSE)`);
+  }
+
+  let havingClause = '';
+  if (havingClauses.length > 0 && tagFilter) {
+    havingClause = ` AND ${havingClauses.join(' AND ')}`;
+  } else if (havingClauses.length > 0) {
+    havingClause = `HAVING ${havingClauses.join(' AND ')}`;
+  }
+
+  const sortClause = sort === 'followers'
+    ? 'ORDER BY COALESCE(us.followers_count, 0) DESC'
+    : sort === 'earliest'
+    ? 'ORDER BY r.created_at ASC'
+    : 'ORDER BY r.created_at DESC';
+
+  const mutualSelect = includeMutuals && listOwner
+    ? `, EXISTS (
+        SELECT 1 FROM efp_mutuals m
+        WHERE (m.address_a = '${listOwner}' AND m.address_b = LOWER(convert_from(r.record_data, 'UTF8')))
+           OR (m.address_b = '${listOwner}' AND m.address_a = LOWER(convert_from(r.record_data, 'UTF8')))
+      ) as is_mutual`
+    : '';
+
+  const blockedMutedSelect = (includeBlocked || includeMuted)
+    ? `, COALESCE('block' = ANY(array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL)), FALSE) as is_blocked,
+       COALESCE('mute' = ANY(array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL)), FALSE) as is_muted`
+    : '';
+
+  const result = await query<{
+    record_data: string;
+    tags: string[] | null;
+    is_mutual?: boolean;
+    is_blocked?: boolean;
+    is_muted?: boolean;
+  }>(
+    `
+    SELECT
+      LOWER(convert_from(r.record_data, 'UTF8')) as record_data,
+      array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL) as tags
+      ${mutualSelect}
+      ${blockedMutedSelect}
+    FROM efp_list_records r
+    LEFT JOIN efp_list_record_tags t ON
+      t.chain_id = r.chain_id AND t.contract_address = r.contract_address
+      AND t.slot = r.slot AND t.record = r.record
+    LEFT JOIN efp_user_stats us ON us.address = LOWER(convert_from(r.record_data, 'UTF8'))
+    WHERE r.chain_id = $1 AND r.contract_address = $2 AND r.slot = $3
+      AND r.record_type = 1
+      AND length(convert_from(r.record_data, 'UTF8')) = 42
+    GROUP BY r.record, r.record_data, r.created_at
+    ${tagFilter}${havingClause}
+    ${sortClause}
+    LIMIT $4 OFFSET $5
+    `,
+    params
+  );
+
+  const following: FollowingEntry[] = result.rows.map((row) => {
+    const entry: FollowingEntry = {
+      version: 1,
+      record_type: 'address',
+      data: row.record_data.toLowerCase() as Address,
+      address: row.record_data.toLowerCase() as Address,
+      tags: row.tags || [],
+    };
+    if (includeMutuals && row.is_mutual !== undefined) {
+      (entry as FollowingEntry & { is_mutual: boolean }).is_mutual = row.is_mutual;
+    }
+    if (includeBlocked && row.is_blocked !== undefined) {
+      (entry as FollowingEntry & { is_blocked: boolean }).is_blocked = row.is_blocked;
+    }
+    if (includeMuted && row.is_muted !== undefined) {
+      (entry as FollowingEntry & { is_muted: boolean }).is_muted = row.is_muted;
+    }
+    return entry;
+  });
+
+  if (includeENS && following.length > 0) {
+    const addresses = following.map((f) => f.address);
+    const ensProfiles = await getENSProfiles(addresses);
+    for (const entry of following) {
+      const profile = ensProfiles.get(entry.address);
+      if (profile) {
+        entry.ens = profile;
+      }
+    }
+  }
+
+  return following;
+}
+
+// Count following for a specific list by querying raw tables
+export async function getListFollowingCount(tokenId: string): Promise<number> {
+  const loc = await getListStorageLocation(tokenId);
+  if (!loc) return 0;
+
+  const result = await query<{ count: string }>(
+    `
+    SELECT COUNT(*)::TEXT as count
+    FROM efp_list_records r
+    WHERE r.chain_id = $1 AND r.contract_address = $2 AND r.slot = $3
+      AND r.record_type = 1
+      AND length(convert_from(r.record_data, 'UTF8')) = 42
+      AND NOT EXISTS (
+        SELECT 1 FROM efp_list_record_tags t
+        WHERE t.chain_id = r.chain_id AND t.contract_address = r.contract_address
+          AND t.slot = r.slot AND t.record = r.record
+          AND t.tag IN ('block', 'mute')
+      )
+    `,
+    [loc.chain_id, loc.contract_address, loc.slot]
+  );
+
+  return parseInt(result.rows[0]?.count || '0', 10);
+}
+
+// Search following within a specific list by address or ENS name
+export async function searchListFollowing(
+  tokenId: string,
+  term: string,
+  options: { limit: number; offset: number; includeENS?: boolean }
+): Promise<FollowingEntry[]> {
+  const { limit, offset, includeENS } = options;
+  const searchTerm = `%${term.toLowerCase()}%`;
+
+  const loc = await getListStorageLocation(tokenId);
+  if (!loc) return [];
+
+  const result = await query<{
+    record_data: string;
+    tags: string[] | null;
+  }>(
+    `
+    SELECT
+      LOWER(convert_from(r.record_data, 'UTF8')) as record_data,
+      array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL) as tags
+    FROM efp_list_records r
+    LEFT JOIN efp_list_record_tags t ON
+      t.chain_id = r.chain_id AND t.contract_address = r.contract_address
+      AND t.slot = r.slot AND t.record = r.record
+    LEFT JOIN ens_metadata em ON em.address = LOWER(convert_from(r.record_data, 'UTF8'))
+    WHERE r.chain_id = $1 AND r.contract_address = $2 AND r.slot = $3
+      AND r.record_type = 1
+      AND length(convert_from(r.record_data, 'UTF8')) = 42
+      AND (
+        LOWER(convert_from(r.record_data, 'UTF8')) LIKE $4
+        OR LOWER(em.name) LIKE $4
+      )
+    GROUP BY r.record, r.record_data, r.created_at
+    HAVING NOT COALESCE('block' = ANY(array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL)), FALSE)
+       AND NOT COALESCE('mute' = ANY(array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL)), FALSE)
+    ORDER BY r.created_at DESC
+    LIMIT $5 OFFSET $6
+    `,
+    [loc.chain_id, loc.contract_address, loc.slot, searchTerm, limit, offset]
+  );
+
+  const following: FollowingEntry[] = result.rows.map((row) => ({
+    version: 1,
+    record_type: 'address',
+    data: row.record_data.toLowerCase() as Address,
+    address: row.record_data.toLowerCase() as Address,
+    tags: row.tags || [],
+  }));
+
+  if (includeENS && following.length > 0) {
+    const addresses = following.map((f) => f.address);
+    const ensProfiles = await getENSProfiles(addresses);
+    for (const entry of following) {
+      const profile = ensProfiles.get(entry.address);
+      if (profile) {
+        entry.ens = profile;
+      }
+    }
+  }
+
+  return following;
+}
+
 // Get follower state for a specific address on a list (followerState)
 // Checks: Is this ADDRESS following the LIST's user?
 export async function getListFollowerState(

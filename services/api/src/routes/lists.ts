@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { query, convertHexToBigInt, toStringOrNull, type Address, createLogger } from '@efp/shared';
 import { getENSProfile, getENSProfiles } from '../services/ens.js';
-import { getFollowers, getFollowing, getListFollowerState, getListFollowingState, searchFollowers, searchFollowing } from '../services/followers.js';
+import { getFollowers, getListFollowing, getListFollowingCount, searchListFollowing, getListFollowerState, getListFollowingState, searchFollowers } from '../services/followers.js';
 import { getListTags, getListTaggedAs } from '../services/tags.js';
 import { getRecommendations, getRecommendationsWithDetails } from '../services/recommendations.js';
 import { getPOAPBadges } from '../services/poap.js';
@@ -175,17 +175,17 @@ export async function listsRoutes(app: FastifyInstance) {
 
       const address = list.user || list.owner;
 
-      const result = await query<{
-        followers_count: number;
-        following_count: number;
-      }>(
-        `SELECT followers_count, following_count FROM efp_user_stats WHERE address = $1`,
-        [address]
-      );
+      const [statsResult, listFollowingCount] = await Promise.all([
+        query<{ followers_count: number }>(
+          `SELECT followers_count FROM efp_user_stats WHERE address = $1`,
+          [address]
+        ),
+        getListFollowingCount(tokenId),
+      ]);
 
       return {
-        followers_count: result.rows[0]?.followers_count ?? 0,
-        following_count: result.rows[0]?.following_count ?? 0,
+        followers_count: statsResult.rows[0]?.followers_count ?? 0,
+        following_count: listFollowingCount,
       };
     }
   );
@@ -231,11 +231,10 @@ export async function listsRoutes(app: FastifyInstance) {
         return reply.status(404).send({ response: 'List not found' });
       }
 
-      const address = list.user || list.owner;
       const { limit = '10', offset = '0', sort = 'latest', tags, include } = request.query;
       const includeSet = parseIncludeParam(include);
 
-      const following = await getFollowing(address, {
+      const following = await getListFollowing(tokenId, {
         limit: Math.min(parseInt(limit, 10) || 10, 100),
         offset: parseInt(offset, 10) || 0,
         sort: sort as 'latest' | 'followers' | 'earliest',
@@ -382,7 +381,6 @@ export async function listsRoutes(app: FastifyInstance) {
         return reply.status(404).send({ response: 'List not found' });
       }
 
-      const address = list.user || list.owner;
       const { limit, offset = '0', sort = 'latest', tags, include } = request.query;
       const includeSet = parseIncludeParam(include);
 
@@ -391,98 +389,18 @@ export async function listsRoutes(app: FastifyInstance) {
       const effectiveOffset = parseInt(offset, 10) || 0;
 
       // Old API uses 2-option sort: latest=DESC, anything else=ASC
-      const sortDirection = sort === 'latest' ? 'DESC' : 'ASC';
+      const effectiveSort = sort === 'latest' ? 'latest' : 'earliest';
 
-      let tagFilter = '';
-      const params: unknown[] = [address, effectiveLimit, effectiveOffset];
-
-      if (tags) {
-        const tagList = tags.split(',').filter(Boolean);
-        if (tagList.length > 0) {
-          tagFilter = 'AND f.tags && $4';
-          params.push(tagList);
-        }
-      }
-
-      // By default, exclude blocked/muted entries unless explicitly requested
-      let blockedMutedFilter = '';
-      if (!includeSet.has('blocked') && !includeSet.has('muted')) {
-        blockedMutedFilter = 'AND f.is_blocked = FALSE AND f.is_muted = FALSE';
-      } else if (!includeSet.has('blocked')) {
-        blockedMutedFilter = 'AND f.is_blocked = FALSE';
-      } else if (!includeSet.has('muted')) {
-        blockedMutedFilter = 'AND f.is_muted = FALSE';
-      }
-
-      // Include is_mutual in query if requested
-      const mutualSelect = includeSet.has('mutuals')
-        ? `, EXISTS (
-            SELECT 1 FROM efp_mutuals m
-            WHERE (m.address_a = $1 AND m.address_b = f.following_address)
-               OR (m.address_b = $1 AND m.address_a = f.following_address)
-          ) as is_mutual`
-        : '';
-
-      // Select is_blocked and is_muted if including them
-      const blockedMutedSelect = (includeSet.has('blocked') || includeSet.has('muted'))
-        ? ', f.is_blocked, f.is_muted'
-        : '';
-
-      const result = await query<{
-        following_address: string;
-        tags: string[];
-        is_mutual?: boolean;
-        is_blocked?: boolean;
-        is_muted?: boolean;
-      }>(
-        `
-        SELECT
-          f.following_address,
-          f.tags
-          ${mutualSelect}
-          ${blockedMutedSelect}
-        FROM efp_following f
-        WHERE f.address = $1
-          ${blockedMutedFilter}
-          ${tagFilter}
-        ORDER BY f.created_at ${sortDirection}
-        LIMIT $2 OFFSET $3
-        `,
-        params
-      );
-
-      const following = result.rows.map((row) => {
-        const entry: Record<string, unknown> = {
-          version: 1,
-          record_type: 'address',
-          data: row.following_address.toLowerCase() as Address,
-          address: row.following_address.toLowerCase() as Address,
-          tags: row.tags || [],
-        };
-        if (includeSet.has('mutuals') && row.is_mutual !== undefined) {
-          entry.is_mutual = row.is_mutual;
-        }
-        if (includeSet.has('blocked') && row.is_blocked !== undefined) {
-          entry.is_blocked = row.is_blocked;
-        }
-        if (includeSet.has('muted') && row.is_muted !== undefined) {
-          entry.is_muted = row.is_muted;
-        }
-        return entry;
+      const following = await getListFollowing(tokenId, {
+        limit: effectiveLimit,
+        offset: effectiveOffset,
+        sort: effectiveSort as 'latest' | 'followers' | 'earliest',
+        tags: tags?.split(',').filter(Boolean),
+        includeENS: includeSet.has('ens'),
+        includeMutuals: includeSet.has('mutuals'),
+        includeBlocked: includeSet.has('blocked'),
+        includeMuted: includeSet.has('muted'),
       });
-
-      // Add ENS data if requested
-      if (includeSet.has('ens') && following.length > 0) {
-        const addresses = following.map((f) => f.address as Address);
-        const ensProfiles = await getENSProfiles(addresses);
-
-        for (const entry of following) {
-          const profile = ensProfiles.get(entry.address as Address);
-          if (profile) {
-            entry.ens = profile;
-          }
-        }
-      }
 
       return { following };
     }
@@ -618,9 +536,7 @@ export async function listsRoutes(app: FastifyInstance) {
         return reply.status(404).send({ response: 'List not found' });
       }
 
-      const address = list.user || list.owner;
-
-      const following = await getFollowing(address, {
+      const following = await getListFollowing(tokenId, {
         limit: 100000,
         offset: 0,
         sort: 'latest',
@@ -698,7 +614,7 @@ export async function listsRoutes(app: FastifyInstance) {
       const followers = await searchFollowers(address, term, {
         limit: Math.min(parseInt(limit, 10) || 10, 100),
         offset: parseInt(offset, 10) || 0,
-        includeENS: include?.includes('ens'),
+        includeENS: true,
       });
 
       return { followers };
@@ -721,11 +637,10 @@ export async function listsRoutes(app: FastifyInstance) {
         return { following: [] };
       }
 
-      const address = list.user || list.owner;
-      const following = await searchFollowing(address, term, {
+      const following = await searchListFollowing(tokenId, term, {
         limit: Math.min(parseInt(limit, 10) || 10, 100),
         offset: parseInt(offset, 10) || 0,
-        includeENS: include?.includes('ens'),
+        includeENS: true,
       });
 
       return { following };
