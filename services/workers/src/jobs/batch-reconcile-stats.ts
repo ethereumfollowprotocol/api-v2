@@ -50,6 +50,29 @@ export async function handleBatchReconcileStats(
     );
   }
 
+  // Clean up pending_list_metadata rows that have already been applied to their lists.
+  // Only delete rows where the list has the metadata set — rows for lists that haven't
+  // been fully created yet are preserved indefinitely.
+  const cleanupResult = await query(
+    `
+    DELETE FROM pending_list_metadata p
+    WHERE EXISTS (
+      SELECT 1 FROM efp_lists l
+      WHERE l.list_storage_location_chain_id = p.chain_id
+        AND l.list_storage_location_contract_address = p.contract_address
+        AND l.list_storage_location_slot = p.slot
+        AND (
+          (p.key = 'user' AND l."user" IS NOT NULL)
+          OR (p.key = 'manager' AND l.manager IS NOT NULL)
+        )
+    )
+  `
+  );
+
+  if (cleanupResult.rowCount && cleanupResult.rowCount > 0) {
+    logger.info({ cleaned: cleanupResult.rowCount }, 'Cleaned up resolved pending_list_metadata rows');
+  }
+
   const duration = Date.now() - startTime;
   logger.info({ duration, reconciled: staleUsers.rows.length }, 'Completed batch stats reconciliation');
 }

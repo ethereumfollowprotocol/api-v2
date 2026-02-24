@@ -35,6 +35,24 @@ const SCHEMA_MIGRATIONS = [
       WHERE event_name = 'ListOp';
     `,
   },
+  {
+    name: '011_create_pending_list_metadata',
+    sql: `
+      -- Staging table for list metadata that arrives before the list row exists.
+      -- When UpdateListMetadata fires before Transfer + UpdateListStorageLocation,
+      -- the UPDATE on efp_lists hits 0 rows. We stage the metadata here and apply
+      -- it when the storage location is set.
+      CREATE TABLE IF NOT EXISTS pending_list_metadata (
+          chain_id         BIGINT NOT NULL,
+          contract_address VARCHAR(42) NOT NULL,
+          slot             BYTEA NOT NULL,
+          key              VARCHAR(255) NOT NULL,
+          value            TEXT NOT NULL,
+          created_at       TIMESTAMPTZ DEFAULT NOW(),
+          PRIMARY KEY (chain_id, contract_address, slot, key)
+      );
+    `,
+  },
 ];
 
 // Data migrations run AFTER indexer catches up (populate derived tables)
