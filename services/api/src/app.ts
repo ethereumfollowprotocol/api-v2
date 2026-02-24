@@ -25,7 +25,7 @@ export async function buildApp() {
   // CORS
   await app.register(cors, {
     origin: true,
-    methods: ['GET', 'HEAD', 'OPTIONS'],
+    methods: ['GET', 'HEAD', 'OPTIONS', 'POST'],
   });
 
   // Rate limiting (IP-based)
