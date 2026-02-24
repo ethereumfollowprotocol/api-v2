@@ -162,6 +162,18 @@ CREATE TABLE IF NOT EXISTS efp_account_metadata (
 
 CREATE INDEX IF NOT EXISTS idx_efp_account_metadata_key ON efp_account_metadata(key);
 
+-- Pending list metadata (staging table for race condition handling)
+-- When UpdateListMetadata arrives before the list row exists, we stage it here
+CREATE TABLE IF NOT EXISTS pending_list_metadata (
+    chain_id         BIGINT NOT NULL,
+    contract_address VARCHAR(42) NOT NULL,
+    slot             BYTEA NOT NULL,
+    key              VARCHAR(255) NOT NULL,
+    value            TEXT NOT NULL,
+    created_at       TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (chain_id, contract_address, slot, key)
+);
+
 -- ============================================================
 -- DERIVED TABLES (populated by migration + WAL-listener)
 -- ============================================================

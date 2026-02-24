@@ -397,6 +397,51 @@ export async function handleUpdateListStorageLocation(
       parsed.slot,
     ]
   );
+
+  // Apply any pending metadata that was staged before this list had a storage location
+  const pendingRows = await query<{ key: string; value: string }>(
+    `
+    SELECT key, value FROM pending_list_metadata
+    WHERE chain_id = $1
+      AND contract_address = $2
+      AND slot = $3
+  `,
+    [parsed.chainId.toString(), parsed.contractAddress, parsed.slot]
+  );
+
+  if (pendingRows.rows.length > 0) {
+    for (const row of pendingRows.rows) {
+      if (row.key === 'user') {
+        await query(
+          `UPDATE efp_lists SET "user" = $2, updated_at = NOW() WHERE token_id = $1`,
+          [tokenId.toString(), row.value]
+        );
+        logger.info({ tokenId: tokenId.toString(), user: row.value }, 'Applied pending user metadata');
+      } else if (row.key === 'manager') {
+        await query(
+          `UPDATE efp_lists SET manager = $2, updated_at = NOW() WHERE token_id = $1`,
+          [tokenId.toString(), row.value]
+        );
+        logger.info({ tokenId: tokenId.toString(), manager: row.value }, 'Applied pending manager metadata');
+      }
+    }
+
+    // Clean up applied pending rows
+    await query(
+      `
+      DELETE FROM pending_list_metadata
+      WHERE chain_id = $1
+        AND contract_address = $2
+        AND slot = $3
+    `,
+      [parsed.chainId.toString(), parsed.contractAddress, parsed.slot]
+    );
+
+    logger.info(
+      { tokenId: tokenId.toString(), count: pendingRows.rows.length },
+      'Cleaned up applied pending metadata'
+    );
+  }
 }
 
 export async function handleUpdateListMetadata(
@@ -416,7 +461,7 @@ export async function handleUpdateListMetadata(
     // Value is a 20-byte address (40 hex chars after 0x)
     const userAddress = '0x' + value.slice(2, 42).toLowerCase();
 
-    await query(
+    const result = await query(
       `
       UPDATE efp_lists SET
         "user" = $4,
@@ -428,12 +473,28 @@ export async function handleUpdateListMetadata(
       [chainId, contractAddress.toLowerCase(), slot, userAddress]
     );
 
-    logger.info({ slot, user: userAddress, chainId }, 'Updated list user');
+    if (result.rowCount === 0) {
+      // List row doesn't exist yet (race condition: metadata arrives before Transfer + StorageLocation)
+      // Stage it for later application when handleUpdateListStorageLocation runs
+      await query(
+        `
+        INSERT INTO pending_list_metadata (chain_id, contract_address, slot, key, value)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (chain_id, contract_address, slot, key) DO UPDATE SET
+          value = EXCLUDED.value,
+          created_at = NOW()
+      `,
+        [chainId, contractAddress.toLowerCase(), slot, 'user', userAddress]
+      );
+      logger.warn({ slot, user: userAddress, chainId }, 'List not found for metadata update, staging as pending');
+    } else {
+      logger.info({ slot, user: userAddress, chainId }, 'Updated list user');
+    }
   } else if (key === 'manager') {
     // Value is a 20-byte address (40 hex chars after 0x)
     const managerAddress = '0x' + value.slice(2, 42).toLowerCase();
 
-    await query(
+    const result = await query(
       `
       UPDATE efp_lists SET
         manager = $4,
@@ -445,7 +506,21 @@ export async function handleUpdateListMetadata(
       [chainId, contractAddress.toLowerCase(), slot, managerAddress]
     );
 
-    logger.info({ slot, manager: managerAddress, chainId }, 'Updated list manager');
+    if (result.rowCount === 0) {
+      await query(
+        `
+        INSERT INTO pending_list_metadata (chain_id, contract_address, slot, key, value)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (chain_id, contract_address, slot, key) DO UPDATE SET
+          value = EXCLUDED.value,
+          created_at = NOW()
+      `,
+        [chainId, contractAddress.toLowerCase(), slot, 'manager', managerAddress]
+      );
+      logger.warn({ slot, manager: managerAddress, chainId }, 'List not found for metadata update, staging as pending');
+    } else {
+      logger.info({ slot, manager: managerAddress, chainId }, 'Updated list manager');
+    }
   }
 }
 
