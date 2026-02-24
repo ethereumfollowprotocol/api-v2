@@ -18,6 +18,7 @@ import { handleBatchRefreshENS } from './jobs/batch-refresh-ens.js';
 import { handleShuffleRecommended } from './jobs/shuffle-recommended.js';
 import { handleSeedRecommended } from './jobs/seed-recommended.js';
 import { handleBatchRecalculateMutuals } from './jobs/batch-recalculate-mutuals.js';
+import { handleResyncListRelationships } from './jobs/resync-list-relationships.js';
 
 const logger = createLogger('workers');
 
@@ -30,6 +31,7 @@ const jobConfigs: Record<string, Partial<PgBoss.WorkOptions>> = {
   'sync-ens-metadata': { teamSize: 10, teamConcurrency: 10 },
   'resync-user-relationships': { teamSize: 1, teamConcurrency: 1 },
   'batch-recalculate-mutuals': { teamSize: 2, teamConcurrency: 2 },
+  'resync-list-relationships': { teamSize: 2, teamConcurrency: 2 },
   'ensure-user-stats': { teamSize: 5, teamConcurrency: 5 },
   'batch-reconcile-stats': { teamSize: 1, teamConcurrency: 1 },
   'batch-refresh-ens': { teamSize: 1, teamConcurrency: 1 },
@@ -78,6 +80,7 @@ async function main() {
     ['update-leaderboard-full', handleUpdateLeaderboardFull],
     ['sync-ens-metadata', handleSyncENSMetadata],
     ['resync-user-relationships', handleResyncUserRelationships],
+    ['resync-list-relationships', handleResyncListRelationships],
     ['batch-recalculate-mutuals', handleBatchRecalculateMutuals],
     ['ensure-user-stats', handleEnsureUserStats],
     ['batch-reconcile-stats', handleBatchReconcileStats],

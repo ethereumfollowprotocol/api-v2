@@ -75,7 +75,10 @@ export async function handleListRecordsChange(
   );
 
   if (listResult.rows.length === 0) {
-    logger.debug('No list found for record, skipping');
+    logger.warn(
+      { chain_id: record.chain_id, contract_address: record.contract_address },
+      'No list found for record, skipping'
+    );
     return;
   }
 
@@ -83,7 +86,10 @@ export async function handleListRecordsChange(
   const followerAddress = list.user?.toLowerCase() as Address;
 
   if (!followerAddress) {
-    logger.debug('List has no user, skipping');
+    logger.warn(
+      { token_id: list.token_id, chain_id: record.chain_id, contract_address: record.contract_address },
+      'List has no user, skipping'
+    );
     return;
   }
 
