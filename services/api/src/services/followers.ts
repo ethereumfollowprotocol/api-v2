@@ -507,6 +507,47 @@ export async function getListFollowingState(
   };
 }
 
+// Batch version of getListFollowingState - checks multiple addresses in 2 queries instead of 2N
+export async function getListFollowingStateBatch(
+  listTokenId: string,
+  targetAddresses: Address[]
+): Promise<Map<Address, { follow: boolean; block: boolean; mute: boolean }>> {
+  const loc = await getListStorageLocation(listTokenId);
+  if (!loc) return new Map();
+
+  const result = await query<{
+    address: string;
+    tags: string[] | null;
+  }>(
+    `
+    SELECT LOWER(convert_from(r.record_data, 'UTF8')) as address,
+           array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL) as tags
+    FROM efp_list_records r
+    LEFT JOIN efp_list_record_tags t ON
+      t.chain_id = r.chain_id AND t.contract_address = r.contract_address
+      AND t.slot = r.slot AND t.record = r.record
+    WHERE r.chain_id = $1 AND r.contract_address = $2 AND r.slot = $3
+      AND LOWER(convert_from(r.record_data, 'UTF8')) = ANY($4::text[])
+    GROUP BY LOWER(convert_from(r.record_data, 'UTF8'))
+    `,
+    [loc.chain_id, loc.contract_address, loc.slot, targetAddresses.map((a) => a.toLowerCase())]
+  );
+
+  const stateMap = new Map<Address, { follow: boolean; block: boolean; mute: boolean }>();
+  for (const row of result.rows) {
+    const tags = row.tags || [];
+    const isBlocked = tags.includes('block');
+    const isMuted = tags.includes('mute');
+    stateMap.set(row.address.toLowerCase() as Address, {
+      follow: !isBlocked && !isMuted,
+      block: isBlocked,
+      mute: isMuted,
+    });
+  }
+
+  return stateMap;
+}
+
 // Get list storage location from efp_lists
 async function getListStorageLocation(
   tokenId: string

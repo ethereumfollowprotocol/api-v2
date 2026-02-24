@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { query, convertHexToBigInt, toStringOrNull, type Address, createLogger } from '@efp/shared';
 import { getENSProfile, getENSProfiles } from '../services/ens.js';
-import { getFollowers, getListFollowing, getListFollowingCount, searchListFollowing, getListFollowerState, getListFollowingState, searchFollowers } from '../services/followers.js';
+import { getFollowers, getListFollowing, getListFollowingCount, searchListFollowing, getListFollowerState, getListFollowingState, getListFollowingStateBatch, searchFollowers } from '../services/followers.js';
 import { getListTags, getListTaggedAs } from '../services/tags.js';
 import { getRecommendations, getRecommendationsWithDetails } from '../services/recommendations.js';
 import { getPOAPBadges } from '../services/poap.js';
@@ -785,6 +785,76 @@ export async function listsRoutes(app: FastifyInstance) {
       const address = list.user || list.owner;
       const poaps = await getPOAPBadges(address);
       return { poaps };
+    }
+  );
+
+  // POST /lists/:tokenId/buttonStateBatch (P2)
+  // Batch version of buttonState - accepts up to 50 addresses/ENS names
+  app.post<{ Params: TokenParams }>(
+    '/lists/:tokenId/buttonStateBatch',
+    async (request, reply) => {
+      const { tokenId } = request.params;
+      const body = request.body;
+
+      // Validate input
+      if (!Array.isArray(body)) {
+        return reply.status(400).send({ error: 'Request body must be a JSON array of addresses or ENS names' });
+      }
+      if (body.length === 0 || body.length > 50) {
+        return reply.status(400).send({ error: 'Array must contain between 1 and 50 items' });
+      }
+      if (!body.every((item: unknown) => typeof item === 'string' && item.length > 0)) {
+        return reply.status(400).send({ error: 'Each item must be a non-empty string' });
+      }
+
+      const list = await getListInfo(tokenId);
+      if (!list) {
+        return reply.status(404).send({ response: 'List not found' });
+      }
+
+      // Resolve all addresses in parallel
+      const resolutions = await Promise.allSettled(
+        (body as string[]).map(async (input) => {
+          const address = await resolveAddressOrENS(input);
+          if (!address) throw new Error('ENS name not valid or does not exist');
+          return address;
+        })
+      );
+
+      // Collect successfully resolved addresses
+      const validAddresses: Address[] = [];
+      for (const result of resolutions) {
+        if (result.status === 'fulfilled') {
+          validAddresses.push(result.value);
+        }
+      }
+
+      // Batch query for all valid addresses
+      const stateMap = validAddresses.length > 0
+        ? await getListFollowingStateBatch(tokenId, validAddresses)
+        : new Map();
+
+      // Build response preserving input order
+      const response = (body as string[]).map((input, i) => {
+        const resolution = resolutions[i];
+        if (resolution.status === 'rejected') {
+          return {
+            token_id: tokenId,
+            address: input,
+            state: null,
+            error: resolution.reason?.message || 'ENS name not valid or does not exist',
+          };
+        }
+        const address = resolution.value;
+        const state = stateMap.get(address.toLowerCase() as Address) || { follow: false, block: false, mute: false };
+        return {
+          token_id: tokenId,
+          address,
+          state,
+        };
+      });
+
+      return response;
     }
   );
 
