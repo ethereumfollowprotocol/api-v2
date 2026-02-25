@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { query, convertHexToBigInt, toStringOrNull, type Address, createLogger } from '@efp/shared';
-import { getENSProfile, getENSProfiles } from '../services/ens.js';
+import { getENSProfile, getENSProfiles, refreshENSProfile } from '../services/ens.js';
 import { getFollowers, getListFollowing, getListFollowingCount, searchListFollowing, getListFollowerState, getListFollowingState, getListFollowingStateBatch, searchFollowers } from '../services/followers.js';
 import { getListTags, getListTaggedAs } from '../services/tags.js';
 import { getRecommendations, getRecommendationsWithDetails } from '../services/recommendations.js';
@@ -70,7 +70,7 @@ async function getListInfo(
 export async function listsRoutes(app: FastifyInstance) {
   // GET /lists/:tokenId/account (P1)
   // Response shape must match production: { address, ens, is_primary_list, primary_list }
-  app.get<{ Params: TokenParams }>(
+  app.get<{ Params: TokenParams; Querystring: { cache?: string } }>(
     '/lists/:tokenId/account',
     async (request, reply) => {
       const { tokenId } = request.params;
@@ -82,6 +82,11 @@ export async function listsRoutes(app: FastifyInstance) {
 
       // Get ENS for user or owner
       const address = list.user || list.owner;
+
+      // If cache=fresh, refresh ENS data from chain before building account
+      if (request.query.cache === 'fresh') {
+        await refreshENSProfile(address);
+      }
 
       // Get primary list for the address
       const [ens, primaryListResult] = await Promise.all([
@@ -110,7 +115,7 @@ export async function listsRoutes(app: FastifyInstance) {
 
   // GET /lists/:tokenId/details (P1)
   // Response shape must match production: { address, ens, ranks, primary_list }
-  app.get<{ Params: TokenParams }>(
+  app.get<{ Params: TokenParams; Querystring: { cache?: string } }>(
     '/lists/:tokenId/details',
     async (request, reply) => {
       const { tokenId } = request.params;
@@ -121,6 +126,11 @@ export async function listsRoutes(app: FastifyInstance) {
       }
 
       const address = list.user || list.owner;
+
+      // If cache=fresh, refresh ENS data from chain before building details
+      if (request.query.cache === 'fresh') {
+        await refreshENSProfile(address);
+      }
 
       // Get ENS, ranks, and primary list
       const [ens, ranksResult, primaryListResult] = await Promise.all([

@@ -28,7 +28,7 @@ export async function handleSyncENSMetadata(
       `
       SELECT updated_at FROM ens_metadata
       WHERE address = $1
-        AND updated_at > NOW() - INTERVAL '24 hours'
+        AND updated_at > NOW() - INTERVAL '4 hours'
         AND name IS NOT NULL AND name != ''
     `,
       [address]

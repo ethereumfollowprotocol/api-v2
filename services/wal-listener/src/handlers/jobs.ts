@@ -78,6 +78,6 @@ export async function publishENSSync(address: string, force?: boolean): Promise<
   await publishJob(
     'sync-ens-metadata',
     { address, force },
-    { singletonKey: `ens:${address}`, singletonSeconds: 3600 } // Dedupe for 1 hour
+    { singletonKey: `ens:${address}`, singletonSeconds: 300 } // Dedupe for 5 minutes
   );
 }
