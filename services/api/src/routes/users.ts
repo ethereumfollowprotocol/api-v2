@@ -4,7 +4,7 @@ import { isAddress } from 'viem';
 import qrcode from 'qr-image';
 import { resolveAddressOrENS, isENSName, normalizeAddress } from '../services/address.js';
 import { getUserAccount, getUserDetails, getUserStats, getUserLists } from '../services/users.js';
-import { getENSProfile, getENSProfiles } from '../services/ens.js';
+import { getENSProfile, getENSProfiles, refreshENSProfile } from '../services/ens.js';
 import {
   getFollowers,
   getFollowing,
@@ -146,11 +146,16 @@ export async function usersRoutes(app: FastifyInstance) {
   );
 
   // GET /users/:addressOrENS/account (P0)
-  app.get<{ Params: AddressParams }>(
+  app.get<{ Params: AddressParams; Querystring: { cache?: string } }>(
     '/users/:addressOrENS/account',
     async (request, reply) => {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
+
+      // If cache=fresh, refresh ENS data from chain before building account
+      if (request.query.cache === 'fresh') {
+        await refreshENSProfile(address);
+      }
 
       const account = await getUserAccount(address);
       return account;
@@ -158,11 +163,16 @@ export async function usersRoutes(app: FastifyInstance) {
   );
 
   // GET /users/:addressOrENS/details (P0)
-  app.get<{ Params: AddressParams }>(
+  app.get<{ Params: AddressParams; Querystring: { cache?: string } }>(
     '/users/:addressOrENS/details',
     async (request, reply) => {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
+
+      // If cache=fresh, refresh ENS data from chain before building details
+      if (request.query.cache === 'fresh') {
+        await refreshENSProfile(address);
+      }
 
       const details = await getUserDetails(address);
       return details;
@@ -300,11 +310,16 @@ export async function usersRoutes(app: FastifyInstance) {
 
   // GET /users/:addressOrENS/ens (P2)
   // Response shape must match production: { ens: { name, address, avatar, records, updated_at } }
-  app.get<{ Params: AddressParams }>(
+  app.get<{ Params: AddressParams; Querystring: { cache?: string } }>(
     '/users/:addressOrENS/ens',
     async (request, reply) => {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
+
+      // If cache=fresh, refresh ENS data from chain before returning
+      if (request.query.cache === 'fresh') {
+        await refreshENSProfile(address);
+      }
 
       const account = await getUserAccount(address);
       return {

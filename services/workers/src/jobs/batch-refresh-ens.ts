@@ -13,7 +13,7 @@ export async function handleBatchRefreshENS(
     `
     SELECT address
     FROM ens_metadata
-    WHERE updated_at < NOW() - INTERVAL '7 days'
+    WHERE updated_at < NOW() - INTERVAL '1 day'
       OR updated_at IS NULL
     ORDER BY updated_at ASC NULLS FIRST
     LIMIT 500

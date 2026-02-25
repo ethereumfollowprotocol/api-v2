@@ -98,7 +98,7 @@ async function main() {
   // Schedule recurring jobs
   await boss.schedule('update-leaderboard-full', '*/5 * * * *'); // Every 5 minutes
   await boss.schedule('batch-reconcile-stats', '0 * * * *'); // Every hour
-  await boss.schedule('batch-refresh-ens', '0 3 * * *'); // Daily at 3 AM
+  await boss.schedule('batch-refresh-ens', '0 */6 * * *'); // Every 6 hours
   await boss.schedule('shuffle-recommended', '*/15 * * * *'); // Every 15 minutes
 
   // Trigger seed-recommended once on startup (will skip if already populated)
