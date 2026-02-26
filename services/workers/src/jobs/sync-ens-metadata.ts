@@ -1,8 +1,8 @@
 import type PgBoss from 'pg-boss';
-import { createPublicClient, http } from 'viem';
+import { createPublicClient, http, namehash } from 'viem';
 import { normalize } from 'viem/ens';
 import { mainnet } from 'viem/chains';
-import { query, env, createLogger } from '@efp/shared';
+import { query, env, createLogger, decodeContentHash, contenthashAbi } from '@efp/shared';
 
 const logger = createLogger('sync-ens-metadata');
 
@@ -124,9 +124,22 @@ export async function handleSyncENSMetadata(
       'network.dm3.deliveryService',
     ];
 
-    // Fetch avatar and all text records in parallel (normalizedName already validated above)
-    const [avatar, ...textRecordValues] = await Promise.all([
+    // Fetch avatar, contenthash, and all text records in parallel (normalizedName already validated above)
+    const [avatar, rawContenthash, ...textRecordValues] = await Promise.all([
       client.getEnsAvatar({ name: normalizedName }).catch(() => null),
+      client
+        .getEnsResolver({ name: normalizedName })
+        .then((resolver) =>
+          resolver
+            ? client.readContract({
+                address: resolver,
+                abi: contenthashAbi,
+                functionName: 'contenthash',
+                args: [namehash(normalizedName)],
+              })
+            : null
+        )
+        .catch(() => null),
       ...textRecordKeys.map((key) =>
         client.getEnsText({ name: normalizedName, key }).catch(() => null)
       ),
@@ -135,6 +148,8 @@ export async function handleSyncENSMetadata(
     // Build records object
     const records: Record<string, string> = {};
     if (avatar) records.avatar = avatar;
+    const contenthash = decodeContentHash(rawContenthash as string | null);
+    if (contenthash) records.contenthash = contenthash;
 
     // Add all text records that have values
     textRecordKeys.forEach((key, index) => {

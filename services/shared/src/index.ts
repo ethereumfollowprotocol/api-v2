@@ -19,6 +19,9 @@ export {
 // Logger
 export { logger, createLogger } from './logger.js';
 
+// ENS contenthash
+export { decodeContentHash, contenthashAbi } from './contenthash.js';
+
 // Phase management
 export {
   getSystemState,
