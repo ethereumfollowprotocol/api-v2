@@ -1,7 +1,7 @@
-import { createPublicClient, http } from 'viem';
+import { createPublicClient, http, namehash } from 'viem';
 import { normalize } from 'viem/ens';
 import { mainnet } from 'viem/chains';
-import { query, env, type Address, type ENSProfile, createLogger } from '@efp/shared';
+import { query, env, type Address, type ENSProfile, createLogger, decodeContentHash, contenthashAbi } from '@efp/shared';
 
 const logger = createLogger('ens-service');
 
@@ -225,9 +225,22 @@ export async function refreshENSProfile(address: Address): Promise<ENSProfile | 
       return undefined;
     }
 
-    // Fetch avatar and all text records in parallel
-    const [avatar, ...textRecordValues] = await Promise.all([
+    // Fetch avatar, contenthash, and all text records in parallel
+    const [avatar, rawContenthash, ...textRecordValues] = await Promise.all([
       client.getEnsAvatar({ name: normalizedName }).catch(() => null),
+      client
+        .getEnsResolver({ name: normalizedName })
+        .then((resolver) =>
+          resolver
+            ? client.readContract({
+                address: resolver,
+                abi: contenthashAbi,
+                functionName: 'contenthash',
+                args: [namehash(normalizedName)],
+              })
+            : null
+        )
+        .catch(() => null),
       ...textRecordKeys.map((key) =>
         client.getEnsText({ name: normalizedName, key }).catch(() => null)
       ),
@@ -236,6 +249,8 @@ export async function refreshENSProfile(address: Address): Promise<ENSProfile | 
     // Build records object
     const records: Record<string, string> = {};
     if (avatar) records.avatar = avatar;
+    const contenthash = decodeContentHash(rawContenthash as string | null);
+    if (contenthash) records.contenthash = contenthash;
     textRecordKeys.forEach((key, index) => {
       const value = textRecordValues[index];
       if (value) records[key] = value;
