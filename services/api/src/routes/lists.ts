@@ -133,7 +133,10 @@ export async function listsRoutes(app: FastifyInstance) {
       }
 
       // Get ENS, ranks, stats, and primary list
-      const [ens, ranksResult, statsResult, primaryListResult] = await Promise.all([
+      // Use the same data sources as /lists/:tokenId/stats:
+      // - followers_count from efp_user_stats (user-level, same as stats endpoint)
+      // - following_count from getListFollowingCount (list-scoped, same as stats endpoint)
+      const [ens, ranksResult, userStatsResult, listFollowingCount, primaryListResult] = await Promise.all([
         getENSProfile(address),
         query<{
           followers_rank: number | null;
@@ -146,11 +149,11 @@ export async function listsRoutes(app: FastifyInstance) {
            FROM efp_leaderboard WHERE address = $1`,
           [address]
         ),
-        query<{ followers_count: number; following_count: number }>(
-          `SELECT followers_count, following_count
-           FROM efp_user_stats WHERE address = $1`,
+        query<{ followers_count: number }>(
+          `SELECT followers_count FROM efp_user_stats WHERE address = $1`,
           [address]
         ),
+        getListFollowingCount(tokenId),
         query<{ value: string }>(
           `SELECT value FROM efp_account_metadata WHERE address = $1 AND key = 'primary-list'`,
           [address]
@@ -165,8 +168,8 @@ export async function listsRoutes(app: FastifyInstance) {
       return {
         address,
         ens: ens || null,
-        followers_count: statsResult.rows[0]?.followers_count ?? 0,
-        following_count: statsResult.rows[0]?.following_count ?? 0,
+        followers_count: userStatsResult.rows[0]?.followers_count ?? 0,
+        following_count: listFollowingCount,
         ranks: {
           mutuals_rank: toStringOrNull(ranksResult.rows[0]?.mutuals_rank),
           followers_rank: toStringOrNull(ranksResult.rows[0]?.followers_rank),
