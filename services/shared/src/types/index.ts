@@ -43,6 +43,8 @@ export interface AccountResponse {
 export interface DetailsResponse {
   address: Address;
   ens?: ENSProfile;
+  followers_count: number;
+  following_count: number;
   ranks: UserRanks;
   primary_list: string | null;
 }
