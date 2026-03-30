@@ -132,8 +132,8 @@ export async function listsRoutes(app: FastifyInstance) {
         await refreshENSProfile(address);
       }
 
-      // Get ENS, ranks, and primary list
-      const [ens, ranksResult, primaryListResult] = await Promise.all([
+      // Get ENS, ranks, stats, and primary list
+      const [ens, ranksResult, statsResult, primaryListResult] = await Promise.all([
         getENSProfile(address),
         query<{
           followers_rank: number | null;
@@ -144,6 +144,11 @@ export async function listsRoutes(app: FastifyInstance) {
         }>(
           `SELECT followers_rank, following_rank, mutuals_rank, blocks_rank, top8_rank
            FROM efp_leaderboard WHERE address = $1`,
+          [address]
+        ),
+        query<{ followers_count: number; following_count: number }>(
+          `SELECT followers_count, following_count
+           FROM efp_user_stats WHERE address = $1`,
           [address]
         ),
         query<{ value: string }>(
@@ -160,6 +165,8 @@ export async function listsRoutes(app: FastifyInstance) {
       return {
         address,
         ens: ens || null,
+        followers_count: statsResult.rows[0]?.followers_count ?? 0,
+        following_count: statsResult.rows[0]?.following_count ?? 0,
         ranks: {
           mutuals_rank: toStringOrNull(ranksResult.rows[0]?.mutuals_rank),
           followers_rank: toStringOrNull(ranksResult.rows[0]?.followers_rank),

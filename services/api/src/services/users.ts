@@ -25,8 +25,8 @@ export async function getUserAccount(address: Address): Promise<AccountResponse>
 
 // Get user details (P0 endpoint)
 export async function getUserDetails(address: Address): Promise<DetailsResponse> {
-  // Get primary list and ranks in parallel
-  const [primaryListResult, ranksResult, ens] = await Promise.all([
+  // Get primary list, ranks, stats, and ENS in parallel
+  const [primaryListResult, ranksResult, statsResult, ens] = await Promise.all([
     query<{ value: string }>(
       `
       SELECT value FROM efp_account_metadata
@@ -44,6 +44,14 @@ export async function getUserDetails(address: Address): Promise<DetailsResponse>
       `
       SELECT followers_rank, following_rank, mutuals_rank, blocks_rank, top8_rank
       FROM efp_leaderboard
+      WHERE address = $1
+    `,
+      [address]
+    ),
+    query<{ followers_count: number; following_count: number }>(
+      `
+      SELECT followers_count, following_count
+      FROM efp_user_stats
       WHERE address = $1
     `,
       [address]
@@ -71,6 +79,8 @@ export async function getUserDetails(address: Address): Promise<DetailsResponse>
   return {
     address,
     ens,
+    followers_count: statsResult.rows[0]?.followers_count ?? 0,
+    following_count: statsResult.rows[0]?.following_count ?? 0,
     ranks,
     primary_list: primaryList,
   };
