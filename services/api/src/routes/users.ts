@@ -990,6 +990,37 @@ export async function usersRoutes(app: FastifyInstance) {
     }
   );
 
+  // GET /users/:addressOrENS/simple-profile
+  // Lightweight endpoint for integrators (e.g. Etherscan) — always returns
+  // populated display_name and avatar with sensible fallbacks. 5 min cache.
+  const DEFAULT_AVATAR = 'https://efp.app/assets/art/default-avatar.svg';
+
+  app.get<{ Params: AddressParams; Querystring: { cache?: string } }>(
+    '/users/:addressOrENS/simple-profile',
+    async (request, reply) => {
+      const address = await resolveAddress(request.params.addressOrENS, reply);
+      if (!address) return;
+
+      if (request.query.cache === 'fresh') {
+        await refreshENSProfile(address);
+      }
+
+      const [ens, statsResult] = await Promise.all([
+        getENSProfile(address),
+        getUserStats(address),
+      ]);
+
+      return {
+        address,
+        display_name: ens?.name || address,
+        avatar: ens?.avatar || DEFAULT_AVATAR,
+        followers_count: statsResult.followers_count,
+        following_count: statsResult.following_count,
+        url: `https://efp.app/${address}`,
+      };
+    }
+  );
+
   // GET /users/:addressOrENS - Base path returns 501 with available subpaths
   // MUST be registered LAST to avoid catching other routes
   app.get<{ Params: AddressParams }>(
@@ -997,7 +1028,7 @@ export async function usersRoutes(app: FastifyInstance) {
     async (request, reply) => {
       return reply.status(501).send({
         message:
-          'Not a valid endpoint. Available subpaths: /account, /allFollowers, /commonFollowers, /allFollowing, /details, /ens, /followers, /followerState, /following, /lists, /poap, /primary-list, /profile, /qr, /recommended, /relationships, /searchFollowers, /searchFollowing, /stats, /taggedAs, /tags',
+          'Not a valid endpoint. Available subpaths: /account, /allFollowers, /commonFollowers, /allFollowing, /details, /ens, /followers, /followerState, /following, /lists, /poap, /primary-list, /profile, /qr, /recommended, /relationships, /searchFollowers, /searchFollowing, /simple-profile, /stats, /taggedAs, /tags',
       });
     }
   );

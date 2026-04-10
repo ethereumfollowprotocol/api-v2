@@ -44,4 +44,5 @@ export const CACHE_TTL = {
   recommended: 300,
   tags: 60,
   search: 30,
+  profileSimple: 300,
 } as const;
