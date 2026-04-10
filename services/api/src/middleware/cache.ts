@@ -24,6 +24,7 @@ const ROUTE_TTL: Record<string, number> = {
   '/leaderboard/mutuals': CACHE_TTL.leaderboard,
   '/stats': CACHE_TTL.globalStats,
   '/discover': CACHE_TTL.discover,
+  '/users/:addressOrENS/simple-profile': CACHE_TTL.profileSimple,
 };
 
 function getCacheKey(request: FastifyRequest): string {
