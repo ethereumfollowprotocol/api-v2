@@ -2,7 +2,7 @@ import { ApiException, fromHono } from 'chanfana';
 import { Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { cors } from 'hono/cors';
-import { dbMiddleware } from './middleware/db.js';
+import { dbCleanupMiddleware } from './middleware/db.js';
 import { phaseMiddleware } from './middleware/phase.js';
 import { cacheMiddleware } from './middleware/cache.js';
 import { rateLimitMiddleware } from './middleware/rate-limit.js';
@@ -15,9 +15,9 @@ const app = new Hono<{ Bindings: AppBindings; Variables: AppVariables }>();
 
 app.use('*', cors({ origin: '*', allowMethods: ['GET', 'HEAD', 'OPTIONS', 'POST'] }));
 app.use('*', rateLimitMiddleware);
-app.use('*', dbMiddleware);
-app.use('*', phaseMiddleware);
 app.use('*', cacheMiddleware);
+app.use('*', phaseMiddleware);
+app.use('*', dbCleanupMiddleware);
 
 app.onError((err, c) => {
   if (err instanceof ApiException) {
