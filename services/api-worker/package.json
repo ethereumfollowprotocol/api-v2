@@ -1,0 +1,36 @@
+{
+  "name": "@efp/api-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run",
+    "dev": "wrangler dev",
+    "dev:remote": "wrangler dev --remote",
+    "deploy": "wrangler deploy",
+    "cf-typegen": "wrangler types",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:hyperdrive": "vitest run tests/hyperdrive-spike.test.ts",
+    "test:qr": "vitest run tests/qr-spike.test.ts",
+    "test:p0": "vitest run tests/p0-comparison.test.ts"
+  },
+  "dependencies": {
+    "@efp/shared-core": "*",
+    "chanfana": "^2.8.3",
+    "hono": "^4.11.1",
+    "pg": "^8.11.0",
+    "qrcode-svg": "^1.1.0",
+    "viem": "^2.7.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.11.1",
+    "@types/node": "^20.11.0",
+    "@types/pg": "^8.10.0",
+    "qr-image": "^3.2.0",
+    "typescript": "^5.3.0",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.88.0"
+  }
+}
