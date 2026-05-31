@@ -40,7 +40,7 @@ For keys that must be consistent globally (not just per-colo), add a KV namespac
 **Implementation:** [`src/middleware/phase.ts`](../src/middleware/phase.ts)
 
 - Reads `efp_system_state.phase` from Postgres
-- Caches in KV for 10 seconds to avoid a DB round-trip per request
+- Caches in KV for 60 seconds (KV minimum TTL) to avoid a DB round-trip per request
 - Bypasses health and spike endpoints
 
 ## Rate limiting (Rate Limiting binding)

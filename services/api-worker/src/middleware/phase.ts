@@ -1,10 +1,12 @@
 import { createMiddleware } from 'hono/factory';
 import { CACHE_TTL, type Phase } from '@efp/shared-core';
 import { query } from '../db/query.js';
+import { ensureDb } from './db.js';
 import type { AppBindings, AppVariables } from '../types.js';
 
 const PHASE_CACHE_KEY = 'efp:system:phase';
-const PHASE_CACHE_TTL_SEC = 10;
+// Cloudflare KV minimum expirationTtl is 60 seconds.
+const PHASE_CACHE_TTL_SEC = 60;
 
 async function getPhaseFromDb(client: Parameters<typeof query>[0]): Promise<Phase> {
   const result = await query<{ value: string }>(
@@ -14,14 +16,22 @@ async function getPhaseFromDb(client: Parameters<typeof query>[0]): Promise<Phas
   return (result.rows[0]?.value as Phase) || 'historical';
 }
 
-async function getCachedPhase(kv: KVNamespace, client: Parameters<typeof query>[0]): Promise<Phase> {
+async function getCachedPhase(
+  kv: KVNamespace,
+  loadPhaseFromDb: () => Promise<Phase>
+): Promise<Phase> {
   const cached = await kv.get(PHASE_CACHE_KEY);
   if (cached) {
     return cached as Phase;
   }
 
-  const phase = await getPhaseFromDb(client);
-  await kv.put(PHASE_CACHE_KEY, phase, { expirationTtl: PHASE_CACHE_TTL_SEC });
+  const phase = await loadPhaseFromDb();
+  try {
+    await kv.put(PHASE_CACHE_KEY, phase, { expirationTtl: PHASE_CACHE_TTL_SEC });
+  } catch (err) {
+    // Cache write failure must not discard a valid phase from the DB.
+    console.warn(JSON.stringify({ message: 'phase cache write failed', error: String(err) }));
+  }
   return phase;
 }
 
@@ -39,7 +49,10 @@ export const phaseMiddleware = createMiddleware<{ Bindings: AppBindings; Variabl
 
     let phase: Phase;
     try {
-      phase = await getCachedPhase(c.env.PHASE_CACHE, c.get('db'));
+      phase = await getCachedPhase(c.env.PHASE_CACHE, async () => {
+        const client = await ensureDb(c);
+        return getPhaseFromDb(client);
+      });
     } catch {
       phase = 'historical';
     }
@@ -66,4 +79,4 @@ export const phaseMiddleware = createMiddleware<{ Bindings: AppBindings; Variabl
   }
 );
 
-export { CACHE_TTL };
+export { CACHE_TTL, PHASE_CACHE_TTL_SEC };
