@@ -1,5 +1,6 @@
 import { contentJson, OpenAPIRoute } from 'chanfana';
 import type { AppContext } from '../../types.js';
+import { ensureDb } from '../../middleware/db.js';
 import { resolveAddressOrENS, isENSName } from '../../services/address.js';
 import { getUserStats } from '../../services/users.js';
 import { addressOrENSParam, errorResponseSchema, statsResponseSchema } from '../schemas.js';
@@ -35,7 +36,7 @@ export class UserStats extends OpenAPIRoute {
       return c.json({ response: message }, 400);
     }
 
-    const stats = await getUserStats(c.get('db'), address);
+    const stats = await getUserStats(await ensureDb(c), address);
     return c.json(stats);
   }
 }

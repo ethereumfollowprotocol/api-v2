@@ -1,6 +1,7 @@
 import { contentJson, OpenAPIRoute } from 'chanfana';
 import { z } from 'zod';
 import type { AppContext } from '../types.js';
+import { ensureDb } from '../middleware/db.js';
 import { query } from '../db/query.js';
 
 export class HealthCheck extends OpenAPIRoute {
@@ -32,7 +33,7 @@ export class HealthCheck extends OpenAPIRoute {
 
   async handle(c: AppContext) {
     try {
-      await query(c.get('db'), 'SELECT 1 AS ok');
+      await query(await ensureDb(c), 'SELECT 1 AS ok');
       return c.json({ status: 'ok', database: 'connected' });
     } catch (err) {
       return c.json(

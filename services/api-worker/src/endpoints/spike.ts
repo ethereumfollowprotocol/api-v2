@@ -1,6 +1,7 @@
 import { contentJson, OpenAPIRoute } from 'chanfana';
 import { z } from 'zod';
 import type { AppContext } from '../types.js';
+import { ensureDb } from '../middleware/db.js';
 import { query, SPIKE_QUERIES } from '../db/query.js';
 
 const TEST_ADDRESS = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
@@ -31,7 +32,7 @@ export class HyperdriveSpike extends OpenAPIRoute {
   };
 
   async handle(c: AppContext) {
-    const client = c.get('db');
+    const client = await ensureDb(c);
     const results: Record<string, { ok: boolean; rowCount?: number; tokenId?: string | null }> = {};
 
     for (const [name, spec] of Object.entries(SPIKE_QUERIES)) {
