@@ -3,16 +3,11 @@ import { normalize } from 'viem/ens';
 import { mainnet } from 'viem/chains';
 import type { Address } from '@efp/shared-core';
 
-let _client: ReturnType<typeof createPublicClient> | null = null;
-
-function getClient(rpcUrl: string) {
-  if (!_client) {
-    _client = createPublicClient({
-      chain: mainnet,
-      transport: http(rpcUrl),
-    });
-  }
-  return _client;
+function createEthClient(rpcUrl: string) {
+  return createPublicClient({
+    chain: mainnet,
+    transport: http(rpcUrl),
+  });
 }
 
 export async function resolveAddressOrENS(
@@ -24,7 +19,7 @@ export async function resolveAddressOrENS(
   }
 
   try {
-    const client = getClient(rpcUrl);
+    const client = createEthClient(rpcUrl);
     const resolvedAddress = await client.getEnsAddress({
       name: normalize(addressOrENS),
     });
