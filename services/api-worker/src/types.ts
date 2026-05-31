@@ -2,7 +2,7 @@ import type { Client } from 'pg';
 import type { Context } from 'hono';
 
 export type AppVariables = {
-  db: Client;
+  db?: Client;
 };
 
 export type AppBindings = Env;
