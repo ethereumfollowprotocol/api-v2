@@ -52,10 +52,6 @@ export function isSpikeAuthorized(
 
   const secret = env.SPIKE_SECRET;
   if (secret) {
-    const url = new URL(request.url);
-    if (url.searchParams.get('spike_key') === secret) {
-      return true;
-    }
     if (request.headers.get('X-Spike-Key') === secret) {
       return true;
     }
