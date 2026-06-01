@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { SPIKE_QUERIES, query, connectClient, disconnectClient } from '../src/db/query.js';
+import { connectClient, disconnectClient } from '../src/db/client.js';
+import { query } from '../src/db/query.js';
+import { SPIKE_QUERIES } from '../src/db/spike-queries.js';
 
 const TEST_ADDRESS = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const RUN_LIVE = process.env.RUN_HYPERDRIVE_SPIKE === 'true';

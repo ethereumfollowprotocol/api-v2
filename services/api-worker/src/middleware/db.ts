@@ -1,7 +1,7 @@
 import type { Client } from 'pg';
 import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
-import { connectClient, disconnectClient } from '../db/query.js';
+import { connectClient, disconnectClient } from '../db/client.js';
 import type { AppBindings, AppVariables } from '../types.js';
 
 type DbContext = Context<{ Bindings: AppBindings; Variables: AppVariables }>;
