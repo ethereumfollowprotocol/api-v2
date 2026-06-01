@@ -7,6 +7,7 @@ export const addressOrENSParam = z.object({
 
 export const cacheQuery = z.object({
   cache: z.enum(['fresh']).optional(),
+  live: z.enum(['true']).optional(),
 });
 
 export const accountResponseSchema = z.object({
