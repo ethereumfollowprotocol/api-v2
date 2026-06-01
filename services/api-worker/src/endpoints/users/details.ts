@@ -1,8 +1,8 @@
 import { contentJson, OpenAPIRoute } from 'chanfana';
 import type { AppContext } from '../../types.js';
 import { ensureDb } from '../../middleware/db.js';
-import { resolveAddressOrENS, isENSName } from '../../services/address.js';
-import { getUserDetails } from '../../services/users.js';
+import { getUserDetails } from '../../services/users/details.js';
+import { resolveUserAddress } from './resolve-user.js';
 import { addressOrENSParam, cacheQuery, detailsResponseSchema, errorResponseSchema } from '../schemas.js';
 
 export class UserDetails extends OpenAPIRoute {
@@ -29,15 +29,12 @@ export class UserDetails extends OpenAPIRoute {
     const data = await this.getValidatedData<typeof this.schema>();
     const { addressOrENS } = data.params;
 
-    const address = await resolveAddressOrENS(addressOrENS, c.env.PRIMARY_RPC_ETH);
-    if (!address) {
-      const message = isENSName(addressOrENS)
-        ? 'ENS name not valid or does not exist'
-        : 'Invalid address format';
-      return c.json({ response: message }, 400);
+    const resolved = await resolveUserAddress(c, addressOrENS);
+    if (!resolved.ok) {
+      return c.json({ response: resolved.message }, 400);
     }
 
-    const details = await getUserDetails(await ensureDb(c), address);
+    const details = await getUserDetails(await ensureDb(c), resolved.address);
     return c.json(details);
   }
 }

@@ -19,7 +19,7 @@ export const userRanksSchema = z.object({
   followers_rank: z.string().nullable(),
   following_rank: z.string().nullable(),
   top8_rank: z.string().nullable(),
-  blocks_rank: z.union([z.string(), z.number()]).nullable(),
+  blocks_rank: z.string().nullable(),
 });
 
 export const detailsResponseSchema = z.object({
