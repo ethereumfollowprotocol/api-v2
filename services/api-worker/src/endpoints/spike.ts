@@ -16,11 +16,7 @@ export class HyperdriveSpike extends OpenAPIRoute {
   schema = {
     tags: ['Spike'],
     summary: 'Hyperdrive SQL compatibility spike',
-    request: {
-      query: z.object({
-        spike_key: z.string().optional().describe('Must match SPIKE_SECRET binding'),
-      }),
-    },
+    request: {},
     responses: {
       '404': {
         description: 'Spike endpoint disabled (SPIKE_ENDPOINT_ENABLED is not true)',
