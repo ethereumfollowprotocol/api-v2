@@ -75,14 +75,13 @@ export const cacheMiddleware = createMiddleware<{ Bindings: AppBindings; Variabl
         (async () => {
           try {
             const body = await responseClone.text();
+            const headers = new Headers(responseClone.headers);
+            headers.set('Cache-Control', `max-age=${ttl}`);
             await cache.put(
               new Request(`https://cache.internal/${cacheKey}`),
               new Response(body, {
                 status: responseClone.status,
-                headers: {
-                  'Content-Type': responseClone.headers.get('Content-Type') || 'application/json',
-                  'Cache-Control': `max-age=${ttl}`,
-                },
+                headers,
               })
             );
           } catch {
