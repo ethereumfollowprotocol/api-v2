@@ -56,9 +56,22 @@ npm run dev:remote -w @efp/api-worker
 | GET | `/api/v1/users/:addressOrENS/details` | P0 |
 | GET | `/api/v1/users/:addressOrENS/stats` | P0 |
 | GET | `/api/v1/health` | Health |
-| GET | `/api/v1/spike/hyperdrive` | Spike (remove before prod) |
+| GET | `/api/v1/spike/hyperdrive` | Hyperdrive spike (opt-in, see below) |
 | GET | `/docs` | OpenAPI UI |
 | GET | `/openapi.json` | OpenAPI schema |
+
+## Hyperdrive spike (opt-in)
+
+Disabled by default (`SPIKE_ENDPOINT_ENABLED=false`). Production should leave it off.
+
+| Variable | Purpose |
+|----------|---------|
+| `SPIKE_ENDPOINT_ENABLED` | Set `"true"` to expose `/api/v1/spike/*` |
+| `SPIKE_SECRET` | `?spike_key=` or `X-Spike-Key` (wrangler secret) |
+| `SPIKE_ALLOWED_IPS` | Comma-separated `CF-Connecting-IP` allowlist |
+| `CF_ACCESS_CLIENT_ID` | Optional Cloudflare Access client id header match |
+
+When disabled, spike paths return **404** and do not bypass the phase guard or hit Postgres.
 
 ## Testing
 

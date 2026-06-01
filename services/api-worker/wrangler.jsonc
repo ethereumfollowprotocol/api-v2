@@ -16,8 +16,7 @@
   },
   "vars": {
     "SERVE_DURING_SYNC": "false",
-    "RATE_LIMIT_MAX": "100",
-    "RATE_LIMIT_WINDOW_SEC": "60",
+    "SPIKE_ENDPOINT_ENABLED": "false",
     "PRIMARY_RPC_ETH": "https://eth.llamarpc.com"
   },
   "hyperdrive": [
@@ -51,7 +50,8 @@
     "staging": {
       "name": "efp-api-worker-staging",
       "vars": {
-        "SERVE_DURING_SYNC": "true"
+        "SERVE_DURING_SYNC": "true",
+        "SPIKE_ENDPOINT_ENABLED": "true"
       }
     },
     "production": {

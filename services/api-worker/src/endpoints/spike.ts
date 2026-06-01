@@ -2,19 +2,33 @@ import { contentJson, OpenAPIRoute } from 'chanfana';
 import { z } from 'zod';
 import type { AppContext } from '../types.js';
 import { ensureDb } from '../middleware/db.js';
-import { query, SPIKE_QUERIES } from '../db/query.js';
+import { isSpikeAuthorized, isSpikeEndpointEnabled } from '../middleware/spike-auth.js';
+import { query } from '../db/query.js';
+import { SPIKE_QUERIES } from '../db/spike-queries.js';
 
 const TEST_ADDRESS = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 
 /**
- * Hyperdrive spike endpoint — validates parameterized queries, ANY($1), and convert_hex_to_bigint.
- * Bypasses phase middleware. Remove or protect before production cutover.
+ * Hyperdrive spike — validates SQL features used by the API.
+ * Off unless SPIKE_ENDPOINT_ENABLED=true; then requires SPIKE_SECRET, SPIKE_ALLOWED_IPS, or CF Access.
  */
 export class HyperdriveSpike extends OpenAPIRoute {
   schema = {
     tags: ['Spike'],
     summary: 'Hyperdrive SQL compatibility spike',
+    request: {
+      query: z.object({
+        spike_key: z.string().optional().describe('Must match SPIKE_SECRET binding'),
+      }),
+    },
     responses: {
+      '404': {
+        description: 'Spike endpoint disabled (SPIKE_ENDPOINT_ENABLED is not true)',
+      },
+      '403': {
+        description: 'Missing or invalid spike credentials',
+        ...contentJson(z.object({ error: z.string() })),
+      },
       '200': {
         description: 'Spike results',
         ...contentJson(
@@ -32,6 +46,13 @@ export class HyperdriveSpike extends OpenAPIRoute {
   };
 
   async handle(c: AppContext) {
+    if (!isSpikeEndpointEnabled(c.env)) {
+      return c.notFound();
+    }
+    if (!isSpikeAuthorized(c.req.raw, c.env)) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+
     const client = await ensureDb(c);
     const results: Record<string, { ok: boolean; rowCount?: number; tokenId?: string | null }> = {};
 

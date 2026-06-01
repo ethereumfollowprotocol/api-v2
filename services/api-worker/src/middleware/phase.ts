@@ -2,6 +2,7 @@ import { createMiddleware } from 'hono/factory';
 import { CACHE_TTL, type Phase } from '@efp/shared-core';
 import { query } from '../db/query.js';
 import { ensureDb } from './db.js';
+import { isSpikeEndpointEnabled, isSpikePath } from './spike-auth.js';
 import type { AppBindings, AppVariables } from '../types.js';
 
 const PHASE_CACHE_KEY = 'efp:system:phase';
@@ -38,11 +39,16 @@ async function getCachedPhase(
 export const phaseMiddleware = createMiddleware<{ Bindings: AppBindings; Variables: AppVariables }>(
   async (c, next) => {
     const url = new URL(c.req.url);
+    if (isSpikePath(url.pathname)) {
+      if (!isSpikeEndpointEnabled(c.env)) {
+        return c.notFound();
+      }
+      return next();
+    }
     if (
       url.pathname.startsWith('/health') ||
       url.pathname.startsWith('/api/v1/health') ||
-      url.pathname.startsWith('/api/v1/serviceHealth') ||
-      url.pathname.startsWith('/api/v1/spike')
+      url.pathname.startsWith('/api/v1/serviceHealth')
     ) {
       return next();
     }

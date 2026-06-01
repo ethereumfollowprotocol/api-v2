@@ -13,8 +13,7 @@ export default defineWorkersConfig({
           bindings: {
             PRIMARY_RPC_ETH: 'https://eth.llamarpc.com',
             SERVE_DURING_SYNC: 'true',
-            RATE_LIMIT_MAX: '100',
-            RATE_LIMIT_WINDOW_SEC: '60',
+            SPIKE_ENDPOINT_ENABLED: 'false',
           },
         },
       },

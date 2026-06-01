@@ -41,7 +41,7 @@ For keys that must be consistent globally (not just per-colo), add a KV namespac
 
 - Reads `efp_system_state.phase` from Postgres
 - Caches in KV for 60 seconds (KV minimum TTL) to avoid a DB round-trip per request
-- Bypasses health and spike endpoints
+- Bypasses health endpoints; bypasses spike only when `SPIKE_ENDPOINT_ENABLED=true`
 
 ## Rate limiting (Rate Limiting binding)
 
