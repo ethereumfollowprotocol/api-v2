@@ -114,8 +114,13 @@ export async function waitForIndexerCatchUp(pollIntervalMs = 30000): Promise<voi
   }
 }
 
-export async function waitForMigrationComplete(pollIntervalMs = 10000): Promise<void> {
+export async function waitForMigrationComplete(
+  pollIntervalMs = 10000,
+  escalateAfterMs = 60000
+): Promise<void> {
   logger.info('Waiting for migration to complete...');
+
+  const startedAt = Date.now();
 
   while (true) {
     if (await isMigrationComplete()) {
@@ -123,8 +128,26 @@ export async function waitForMigrationComplete(pollIntervalMs = 10000): Promise<
       return;
     }
 
+    const waitedMs = Date.now() - startedAt;
     const phase = await getPhase();
-    logger.debug({ phase }, 'Waiting for migration...');
+
+    // This loop has no upper bound: on a fresh system we must not start
+    // processing jobs until the data migrations have populated the derived
+    // tables. But the indexer can reset migration_complete at runtime when it
+    // re-syncs, and if the orchestrator isn't around to restore it this service
+    // would stall indefinitely. Escalate to error-level so a stuck gate is
+    // visible in logs/alerting instead of failing silently.
+    if (waitedMs >= escalateAfterMs) {
+      logger.error(
+        { phase, waitedSeconds: Math.round(waitedMs / 1000) },
+        'Still waiting for migration_complete=true — this service is NOT processing jobs. ' +
+          'If the system is already live (phase=listening, derived tables populated), the flag ' +
+          'was likely reset by an indexer re-sync; the orchestrator should restore it.'
+      );
+    } else {
+      logger.debug({ phase, waitedMs }, 'Waiting for migration...');
+    }
+
     await sleep(pollIntervalMs);
   }
 }

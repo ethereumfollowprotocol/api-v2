@@ -47,23 +47,31 @@ async function main() {
     }
 
     // Step 4: Run data migrations
-    logger.info('Starting data migrations...');
-    await setPhase('migrating');
-
-    // Run SQL data migrations
-    await runDataMigrations();
-
-    // Mark complete
-    await setMigrationComplete(true);
-    await setPhase('listening');
-
-    logger.info('Migration complete!');
+    await runMigrationCycle();
 
     await monitorSystem();
   } catch (err) {
     logger.error(err, 'Orchestrator fatal error');
     process.exit(1);
   }
+}
+
+/**
+ * Run the data-migration step and mark the system as live. Used both for the
+ * initial migration and for self-healing when the indexer resets the flag.
+ */
+async function runMigrationCycle(): Promise<void> {
+  logger.info('Starting data migrations...');
+  await setPhase('migrating');
+
+  // Run SQL data migrations
+  await runDataMigrations();
+
+  // Mark complete
+  await setMigrationComplete(true);
+  await setPhase('listening');
+
+  logger.info('Migration complete!');
 }
 
 async function monitorSystem() {
@@ -78,11 +86,29 @@ async function monitorSystem() {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  // Stay alive and periodically log health
+  // Stay alive, self-heal a reset migration flag, and periodically log health.
   while (true) {
-    await sleep(5 * 60 * 1000); // Every 5 minutes
-
     try {
+      // The indexer resets migration_complete (and indexer_caught_up) when it
+      // re-syncs. If the orchestrator isn't watching, the workers and
+      // wal-listener stay gated on waitForMigrationComplete() and silently stop
+      // processing jobs. So if the flag has been reset and the indexer has
+      // caught up again, re-run the migration cycle to restore it.
+      const state = await getSystemState();
+      if (!state.migrationComplete) {
+        if (state.indexerCaughtUp) {
+          logger.warn(
+            { state },
+            'migration_complete was reset — re-running data migrations to self-heal'
+          );
+          await runMigrationCycle();
+        } else {
+          logger.info(
+            'migration_complete is false; waiting for indexer to catch up before re-migrating'
+          );
+        }
+      }
+
       const db = getPool();
       const stats = await db.query(`
         SELECT
@@ -96,6 +122,10 @@ async function monitorSystem() {
     } catch (err) {
       logger.error(err, 'Health check failed');
     }
+
+    // Check often enough that a reset flag self-heals quickly, keeping the
+    // workers/wal-listener gate closed for at most ~1 minute.
+    await sleep(60 * 1000);
   }
 }
 
