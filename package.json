@@ -23,6 +23,7 @@
     "test": "vitest run",
     "test:watch": "vitest watch",
     "test:comparison": "vitest run --config vitest.comparison.config.ts",
+    "compare:envs": "tsx scripts/compare-envs.ts",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write ."
   },
