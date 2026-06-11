@@ -27,6 +27,16 @@ const envSchema = z.object({
   // ENS API
   ENS_API_URL: z.string().url().default('https://ens.ethfollow.xyz'),
 
+  // Indexer
+  INDEXER_BATCH_SIZE: z.coerce.number().default(5000),
+  INDEXER_POLL_INTERVAL_BASE: z.coerce.number().default(4000),
+  INDEXER_POLL_INTERVAL_OP: z.coerce.number().default(6000),
+  INDEXER_POLL_INTERVAL_ETH: z.coerce.number().default(12000),
+  INDEXER_IDLE_POLL_INTERVAL_BASE: z.coerce.number().default(10000),
+  INDEXER_IDLE_POLL_INTERVAL_OP: z.coerce.number().default(20000),
+  INDEXER_IDLE_POLL_INTERVAL_ETH: z.coerce.number().default(30000),
+  INDEXER_IDLE_THRESHOLD: z.coerce.number().default(5),
+
   // Phase Management
   SERVE_DURING_SYNC: z
     .string()
