@@ -34,8 +34,12 @@ export function extractTargetAddress(op: string): string {
 // Log fetching
 // ============================================================
 
-// Provider errors indicating the combined query returned too much data for
-// one response — recoverable by halving the block range
+// Provider errors indicating the query covered too much data for one
+// response — recoverable by halving the block range. Patterns are kept
+// narrow on purpose: a false positive turns an unrelated error into wasted
+// recursive getLogs retries. The last pattern matches Alchemy's block-range
+// cap ("... with up to a 2K block range") without matching generic messages
+// like "invalid block range".
 export function isResponseCapError(err: unknown): boolean {
   let current: unknown = err;
   while (current instanceof Error) {
@@ -45,7 +49,7 @@ export function isResponseCapError(err: unknown): boolean {
       /response size exceeded/i.test(msg) ||
       /log response size/i.test(msg) ||
       /result is too large/i.test(msg) ||
-      /block range/i.test(msg)
+      /up to a \S+ block range/i.test(msg)
     ) {
       return true;
     }
@@ -90,6 +94,11 @@ export async function getLogsRange(
 const TIMESTAMP_CACHE_MAX = 1024;
 const TIMESTAMP_FETCH_CONCURRENCY = 10;
 const timestampCaches = new Map<number, Map<bigint, Date>>();
+
+// Test hook — resets the module-level cache between test cases
+export function clearTimestampCaches(): void {
+  timestampCaches.clear();
+}
 
 export async function fetchBlockTimestamps(
   chainId: number,
@@ -269,8 +278,13 @@ export async function processChainLogs(
     }
   }
 
-  // ListOps only touch record/tag/event tables keyed by slot — independent of
-  // the list-row updates above, so batch processing after is safe
+  // Processing ListOps after the loop does not break ordering: ListOp handlers
+  // write only to efp_list_records / efp_list_record_tags / events (keyed by
+  // slot), while the handlers above write only to efp_lists /
+  // efp_account_metadata / pending_list_metadata. The table sets are disjoint
+  // with no reads across them during indexing, so the relative order between
+  // the two groups is unobservable. Within the batch, ops are applied in log
+  // order by parseListOpsBatch.
   if (listOpLogs.length > 0) {
     await processListOps(config, client, listOpLogs);
   }

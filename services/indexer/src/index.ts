@@ -24,17 +24,21 @@ const rpcCallCounts = new Map<string, number>();
 
 function countingHttp(url: string | undefined, chainName: string) {
   return http(url, {
-    onFetchRequest: async (request) => {
-      try {
-        const body = await request.clone().json();
-        const calls = Array.isArray(body) ? body : [body];
-        for (const call of calls) {
-          const key = `${chainName}:${call?.method ?? 'unknown'}`;
-          rpcCallCounts.set(key, (rpcCallCounts.get(key) ?? 0) + 1);
-        }
-      } catch {
-        // accounting only — never interfere with the request
-      }
+    onFetchRequest: (request) => {
+      // Fire-and-forget: count from a clone without delaying the request
+      void request
+        .clone()
+        .json()
+        .then((body) => {
+          const calls = Array.isArray(body) ? body : [body];
+          for (const call of calls) {
+            const key = `${chainName}:${call?.method ?? 'unknown'}`;
+            rpcCallCounts.set(key, (rpcCallCounts.get(key) ?? 0) + 1);
+          }
+        })
+        .catch(() => {
+          // accounting only — never interfere with the request
+        });
     },
   });
 }
@@ -104,7 +108,6 @@ async function runChainIndexer(config: ChainConfig): Promise<void> {
 
         // Still catching up — keep going without sleeping
         if (toBlock < safeBlock) {
-          consecutiveEmpty = 0;
           continue;
         }
       } else {

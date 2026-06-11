@@ -34,6 +34,7 @@ import {
   getLogsRange,
   isResponseCapError,
   extractTargetAddress,
+  clearTimestampCaches,
   type DecodedLog,
 } from '../processor.js';
 import type { ChainConfig } from '../events.js';
@@ -95,6 +96,7 @@ function makeClient(): PublicClient {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearTimestampCaches();
 });
 
 describe('processChainLogs dispatch', () => {
@@ -193,7 +195,7 @@ describe('processChainLogs dispatch', () => {
   });
 
   it('dedupes getBlock calls for ListOps in the same block and inserts before deleting', async () => {
-    const config = makeConfig({ chainId: 999 }); // fresh chainId to avoid the shared timestamp cache
+    const config = makeConfig();
     const client = makeClient();
     const op = ('0x01010101' + '33'.repeat(20)) as `0x${string}`;
     const logs = [
@@ -270,6 +272,11 @@ describe('isResponseCapError', () => {
     expect(isResponseCapError(new Error('query returned more than 10000 results'))).toBe(true);
     expect(isResponseCapError(new Error('Log response size exceeded'))).toBe(true);
     expect(isResponseCapError(new Error('Query timeout: result is too large'))).toBe(true);
+    expect(
+      isResponseCapError(
+        new Error('You can make eth_getLogs requests with up to a 2K block range')
+      )
+    ).toBe(true);
   });
 
   it('walks the cause chain', () => {
@@ -281,6 +288,12 @@ describe('isResponseCapError', () => {
   it('rejects unrelated errors', () => {
     expect(isResponseCapError(new Error('connection refused'))).toBe(false);
     expect(isResponseCapError('not an error')).toBe(false);
+  });
+
+  it('rejects generic block-range errors that bisection cannot fix', () => {
+    expect(isResponseCapError(new Error('invalid block range'))).toBe(false);
+    expect(isResponseCapError(new Error('block range too small'))).toBe(false);
+    expect(isResponseCapError(new Error('fromBlock is after toBlock in block range'))).toBe(false);
   });
 });
 
