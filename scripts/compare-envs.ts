@@ -191,9 +191,14 @@ function shortValue(v: unknown): string {
   return s.length > 80 ? s.slice(0, 77) + '...' : s;
 }
 
+// Plain decimal strings only — Number() would parse "0x..." as hex, making
+// distinct addresses/calldata compare equal after float truncation
+const DECIMAL_RE = /^-?\d+(\.\d+)?$/;
+const INTEGER_RE = /^-?\d+$/;
+
 function numericValue(v: unknown): number | null {
   if (typeof v === 'number') return v;
-  if (typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v))) return Number(v);
+  if (typeof v === 'string' && DECIMAL_RE.test(v.trim())) return Number(v);
   return null;
 }
 
@@ -209,6 +214,23 @@ function arrayItemKey(item: unknown, ignoredKeys: Set<string>): string {
   return JSON.stringify(item, (key, value) => (ignoredKeys.has(key) ? undefined : value));
 }
 
+function canonicalJson(item: unknown, ignoredKeys: Set<string>): string {
+  return JSON.stringify(item, (key, value) => (ignoredKeys.has(key) ? undefined : value)) ?? 'undefined';
+}
+
+// Arrays can contain several items with the same identity key (e.g. taggedAs
+// returns one {address, tag} row per tag) — group rather than dedupe
+function groupByKey(items: unknown[], ignoredKeys: Set<string>): Map<string, unknown[]> {
+  const groups = new Map<string, unknown[]>();
+  for (const item of items) {
+    const key = arrayItemKey(item, ignoredKeys);
+    const group = groups.get(key);
+    if (group) group.push(item);
+    else groups.set(key, [item]);
+  }
+  return groups;
+}
+
 function diffValues(prod: unknown, dev: unknown, path: string, opts: Options, out: Diff[]): void {
   if (out.length > 500) return; // hard cap; the endpoint is already failed
 
@@ -219,8 +241,19 @@ function diffValues(prod: unknown, dev: unknown, path: string, opts: Options, ou
     return;
   }
 
-  // Numeric comparison with tolerance (covers number vs numeric-string too,
-  // but only when both sides are the same type)
+  // Numeric comparison with tolerance, only when both sides are the same
+  // type. Integer strings go through BigInt — uint256 values (token ids,
+  // slots) overflow double precision and could falsely match via Number()
+  if (typeof prod === 'string' && typeof dev === 'string' &&
+      INTEGER_RE.test(prod.trim()) && INTEGER_RE.test(dev.trim())) {
+    const a = BigInt(prod.trim());
+    const b = BigInt(dev.trim());
+    const delta = a > b ? a - b : b - a;
+    if (delta > BigInt(Math.floor(opts.tolerance))) {
+      out.push({ path, prod: shortValue(prod), dev: shortValue(dev) });
+    }
+    return;
+  }
   if (typeof prod === typeof dev) {
     const np = numericValue(prod);
     const nd = numericValue(dev);
@@ -240,13 +273,13 @@ function diffValues(prod: unknown, dev: unknown, path: string, opts: Options, ou
       const len = Math.min(prod.length, dev.length);
       for (let i = 0; i < len; i++) diffValues(prod[i], dev[i], `${path}[${i}]`, opts, out);
     } else {
-      const prodByKey = new Map(prod.map((item) => [arrayItemKey(item, opts.ignoredKeys), item]));
-      const devByKey = new Map(dev.map((item) => [arrayItemKey(item, opts.ignoredKeys), item]));
+      const prodGroups = groupByKey(prod, opts.ignoredKeys);
+      const devGroups = groupByKey(dev, opts.ignoredKeys);
 
       // Membership differences are summarized (counts + a few examples)
       // instead of one diff line per item
-      const onlyInProd = [...prodByKey.keys()].filter((k) => !devByKey.has(k));
-      const onlyInDev = [...devByKey.keys()].filter((k) => !prodByKey.has(k));
+      const onlyInProd = [...prodGroups.keys()].filter((k) => !devGroups.has(k));
+      const onlyInDev = [...devGroups.keys()].filter((k) => !prodGroups.has(k));
       if (onlyInProd.length > 0) {
         const examples = onlyInProd.slice(0, 3).join(', ');
         out.push({
@@ -264,9 +297,25 @@ function diffValues(prod: unknown, dev: unknown, path: string, opts: Options, ou
         });
       }
 
-      for (const [key, prodItem] of prodByKey) {
-        if (devByKey.has(key)) {
-          diffValues(prodItem, devByKey.get(key), `${path}[${key}]`, opts, out);
+      for (const [key, prodGroup] of prodGroups) {
+        const devGroup = devGroups.get(key);
+        if (!devGroup) continue;
+        if (prodGroup.length !== devGroup.length) {
+          out.push({
+            path: `${path}[${key}].occurrences`,
+            prod: String(prodGroup.length),
+            dev: String(devGroup.length),
+          });
+        }
+        // Pair group members deterministically before diffing
+        const byJson = (a: unknown, b: unknown) =>
+          canonicalJson(a, opts.ignoredKeys) < canonicalJson(b, opts.ignoredKeys) ? -1 : 1;
+        const sortedProd = [...prodGroup].sort(byJson);
+        const sortedDev = [...devGroup].sort(byJson);
+        const pairs = Math.min(sortedProd.length, sortedDev.length);
+        for (let i = 0; i < pairs; i++) {
+          const itemPath = prodGroup.length > 1 ? `${path}[${key}#${i}]` : `${path}[${key}]`;
+          diffValues(sortedProd[i], sortedDev[i], itemPath, opts, out);
         }
       }
     }

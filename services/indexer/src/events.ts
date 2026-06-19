@@ -56,8 +56,13 @@ export interface ChainConfig {
   addresses: `0x${string}`[];
   events: AbiEvent[];
   startBlock: bigint;
-  // ListOp events from this address take the batch-processing path
+  // Events are only dispatched when emitted by the contract that owns them:
+  // ListOp/UpdateListMetadata from listRecordsAddress, Transfer/
+  // UpdateListStorageLocation from registryAddress, UpdateAccountMetadata
+  // from accountMetadataAddress. Anything else is logged and skipped.
   listRecordsAddress: `0x${string}`;
+  registryAddress?: `0x${string}`;
+  accountMetadataAddress?: `0x${string}`;
   pollInterval: number;
   idlePollInterval: number;
 }
@@ -80,6 +85,8 @@ export const CHAIN_CONFIGS: ChainConfig[] = [
     ],
     startBlock: BigInt(20180000),
     listRecordsAddress: CONTRACTS.ListRecords.base.address as `0x${string}`,
+    registryAddress: CONTRACTS.ListRegistry.address as `0x${string}`,
+    accountMetadataAddress: CONTRACTS.AccountMetadata.address as `0x${string}`,
     pollInterval: env.INDEXER_POLL_INTERVAL_BASE,
     idlePollInterval: env.INDEXER_IDLE_POLL_INTERVAL_BASE,
   },
