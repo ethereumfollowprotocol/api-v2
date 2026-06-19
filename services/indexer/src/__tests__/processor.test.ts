@@ -62,6 +62,8 @@ function makeConfig(overrides: Partial<ChainConfig> = {}): ChainConfig {
     events: [],
     startBlock: BigInt(20180000),
     listRecordsAddress: LIST_RECORDS_BASE,
+    registryAddress: REGISTRY_ADDRESS,
+    accountMetadataAddress: SHARED_ADDRESS,
     pollInterval: 4000,
     idlePollInterval: 10000,
     ...overrides,
@@ -174,6 +176,8 @@ describe('processChainLogs dispatch', () => {
       name: 'ethereum',
       addresses: [SHARED_ADDRESS],
       listRecordsAddress: SHARED_ADDRESS,
+      registryAddress: undefined,
+      accountMetadataAddress: undefined,
     });
     const op = ('0x01010101' + '22'.repeat(20)) as `0x${string}`;
     const logs = [
@@ -229,6 +233,64 @@ describe('processChainLogs dispatch', () => {
     await processChainLogs(config, makeClient(), logs);
 
     expect(parseListOpsBatch).not.toHaveBeenCalled();
+  });
+
+  it('skips Transfer events not emitted by the registry', async () => {
+    const config = makeConfig();
+    const logs = [
+      makeLog({
+        eventName: 'Transfer',
+        address: LIST_RECORDS_BASE,
+        args: { from: '0x0', to: '0xabc', tokenId: BigInt(1) },
+      }),
+    ];
+
+    await processChainLogs(config, makeClient(), logs);
+
+    expect(handleTransfer).not.toHaveBeenCalled();
+  });
+
+  it('skips UpdateListMetadata events not emitted by list records', async () => {
+    const config = makeConfig();
+    const logs = [
+      makeLog({
+        eventName: 'UpdateListMetadata',
+        address: REGISTRY_ADDRESS,
+        args: { slot: BigInt(1), key: 'user', value: '0xabc' },
+      }),
+    ];
+
+    await processChainLogs(config, makeClient(), logs);
+
+    expect(handleUpdateListMetadata).not.toHaveBeenCalled();
+  });
+
+  it('skips all dispatch on chains with no registry configured', async () => {
+    const config = makeConfig({
+      chainId: 1,
+      name: 'ethereum',
+      addresses: [SHARED_ADDRESS],
+      listRecordsAddress: SHARED_ADDRESS,
+      registryAddress: undefined,
+      accountMetadataAddress: undefined,
+    });
+    const logs = [
+      makeLog({
+        eventName: 'Transfer',
+        address: SHARED_ADDRESS,
+        args: { from: '0x0', to: '0xabc', tokenId: BigInt(1) },
+      }),
+      makeLog({
+        eventName: 'UpdateAccountMetadata',
+        address: SHARED_ADDRESS,
+        args: { addr: '0xuser', key: 'primary-list', value: '0x01' },
+      }),
+    ];
+
+    await processChainLogs(config, makeClient(), logs);
+
+    expect(handleTransfer).not.toHaveBeenCalled();
+    expect(handleUpdateAccountMetadata).not.toHaveBeenCalled();
   });
 
   it('skips undecodable logs without throwing', async () => {

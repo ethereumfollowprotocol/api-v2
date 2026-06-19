@@ -214,7 +214,18 @@ export async function processChainLogs(
   });
 
   const listRecordsAddress = config.listRecordsAddress.toLowerCase();
+  const registryAddress = config.registryAddress?.toLowerCase();
+  const accountMetadataAddress = config.accountMetadataAddress?.toLowerCase();
   const listOpLogs: DecodedLog[] = [];
+
+  // Each event is only dispatched when emitted by the contract that owns it;
+  // an unexpected (address, event) pair means a contract changed underneath us
+  // and silently handling it could write wrong rows
+  const skipUnexpected = (log: DecodedLog) =>
+    logger.warn(
+      { chain: config.name, address: log.address, eventName: log.eventName, blockNumber: log.blockNumber?.toString() },
+      'Event from unexpected address, skipping'
+    );
 
   for (const log of sorted) {
     if (!log.eventName || !log.args) {
@@ -229,14 +240,18 @@ export async function processChainLogs(
 
     switch (log.eventName) {
       case 'ListOp':
-        if (address === listRecordsAddress) {
-          listOpLogs.push(log);
-        } else {
-          logger.warn({ chain: config.name, address }, 'ListOp from unexpected address, skipping');
+        if (address !== listRecordsAddress) {
+          skipUnexpected(log);
+          break;
         }
+        listOpLogs.push(log);
         break;
 
       case 'Transfer':
+        if (address !== registryAddress) {
+          skipUnexpected(log);
+          break;
+        }
         await handleTransfer(
           log as Log,
           log.args as { from: string; to: string; tokenId: bigint },
@@ -245,6 +260,10 @@ export async function processChainLogs(
         break;
 
       case 'UpdateListStorageLocation':
+        if (address !== registryAddress) {
+          skipUnexpected(log);
+          break;
+        }
         await handleUpdateListStorageLocation(
           log as Log,
           log.args as { tokenId: bigint; listStorageLocation: `0x${string}` }
@@ -252,6 +271,10 @@ export async function processChainLogs(
         break;
 
       case 'UpdateAccountMetadata':
+        if (address !== accountMetadataAddress) {
+          skipUnexpected(log);
+          break;
+        }
         await handleUpdateAccountMetadata(
           log as Log,
           log.args as { addr: string; key: string; value: `0x${string}` },
@@ -261,6 +284,10 @@ export async function processChainLogs(
         break;
 
       case 'UpdateListMetadata':
+        if (address !== listRecordsAddress) {
+          skipUnexpected(log);
+          break;
+        }
         await handleUpdateListMetadata(
           log as Log,
           {
