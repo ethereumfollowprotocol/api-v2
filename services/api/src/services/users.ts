@@ -9,13 +9,13 @@ import {
   type UserRanks,
   createLogger,
 } from '@efp/shared';
-import { getENSProfile } from './ens.js';
+import { getENSProfileOrResolve } from './ens.js';
 
 const logger = createLogger('users-service');
 
 // Get user account (P0 endpoint)
 export async function getUserAccount(address: Address): Promise<AccountResponse> {
-  const ens = await getENSProfile(address);
+  const ens = await getENSProfileOrResolve(address);
 
   return {
     address,
@@ -56,7 +56,7 @@ export async function getUserDetails(address: Address): Promise<DetailsResponse>
     `,
       [address]
     ),
-    getENSProfile(address),
+    getENSProfileOrResolve(address),
   ]);
 
   // Get primary list ID

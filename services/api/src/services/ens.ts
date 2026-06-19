@@ -1,7 +1,7 @@
 import { createPublicClient, http, namehash } from 'viem';
 import { normalize } from 'viem/ens';
 import { mainnet } from 'viem/chains';
-import { query, env, type Address, type ENSProfile, createLogger, decodeContentHash, contenthashAbi } from '@efp/shared';
+import { query, env, setCacheNX, type Address, type ENSProfile, createLogger, decodeContentHash, contenthashAbi } from '@efp/shared';
 
 const logger = createLogger('ens-service');
 
@@ -285,4 +285,27 @@ export async function refreshENSProfile(address: Address): Promise<ENSProfile | 
     // Fall back to cached data
     return getENSProfile(address);
   }
+}
+
+// How often we'll attempt a live resolution for an address that is missing/unresolved in the DB.
+// Bounds RPC load: each address is resolved on-demand at most once per this window.
+const ENS_ONDEMAND_TTL = 600; // 10 minutes
+
+// Read ENS from the DB cache, falling back to a single guarded on-demand live
+// resolution when the address has no row (or a NULL-name row). This lets addresses
+// with a valid on-chain name resolve on the normal request path even if they were
+// never seeded into ens_metadata (e.g. addresses with no EFP social-graph presence).
+export async function getENSProfileOrResolve(address: Address): Promise<ENSProfile | undefined> {
+  const profile = await getENSProfile(address);
+  if (profile) return profile; // row exists with a valid, normalized name → done, no RPC
+
+  // No row, or a NULL-name row. Attempt a live resolution at most once per TTL window.
+  // The Redis key doubles as a dedup lock (NX) and a short negative cache: concurrent
+  // and repeat requests within the window serve the current (empty) value without RPC.
+  const won = await setCacheNX(`ens:attempt:${address}`, ENS_ONDEMAND_TTL);
+  if (!won) return profile;
+
+  // refreshENSProfile resolves on-chain, upserts ens_metadata, and handles its own
+  // errors (returning cached data on failure), so subsequent reads hit the DB.
+  return (await refreshENSProfile(address)) ?? profile;
 }

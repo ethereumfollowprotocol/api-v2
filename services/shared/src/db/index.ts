@@ -14,6 +14,7 @@ export {
   closeRedis,
   getCache,
   setCache,
+  setCacheNX,
   deleteCache,
   deleteCachePattern,
   type Redis,
