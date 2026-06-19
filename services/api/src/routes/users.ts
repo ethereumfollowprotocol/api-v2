@@ -4,7 +4,7 @@ import { isAddress } from 'viem';
 import qrcode from 'qr-image';
 import { resolveAddressOrENS, isENSName, normalizeAddress } from '../services/address.js';
 import { getUserAccount, getUserDetails, getUserStats, getUserLists } from '../services/users.js';
-import { getENSProfile, getENSProfiles, refreshENSProfile } from '../services/ens.js';
+import { getENSProfileOrResolve, getENSProfiles, refreshENSProfile } from '../services/ens.js';
 import {
   getFollowers,
   getFollowing,
@@ -341,7 +341,7 @@ export async function usersRoutes(app: FastifyInstance) {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      const profile = await getENSProfile(address);
+      const profile = await getENSProfileOrResolve(address);
       if (profile?.avatar) {
         return reply.redirect(302, profile.avatar);
       }
@@ -900,7 +900,7 @@ export async function usersRoutes(app: FastifyInstance) {
 
       if (isAddress(addressOrENS)) {
         address = addressOrENS.toLowerCase() as Address;
-        const profile = await getENSProfile(address);
+        const profile = await getENSProfileOrResolve(address);
         ensName = profile?.name || null;
         ensAvatar = profile?.avatar || undefined;
       } else {
@@ -910,7 +910,7 @@ export async function usersRoutes(app: FastifyInstance) {
         }
         address = resolved;
         ensName = addressOrENS;
-        const profile = await getENSProfile(address);
+        const profile = await getENSProfileOrResolve(address);
         ensAvatar = profile?.avatar || undefined;
       }
 
@@ -1006,7 +1006,7 @@ export async function usersRoutes(app: FastifyInstance) {
       }
 
       const [ens, statsResult] = await Promise.all([
-        getENSProfile(address),
+        getENSProfileOrResolve(address),
         getUserStats(address),
       ]);
 

@@ -12,6 +12,7 @@ export {
   closeRedis,
   getCache,
   setCache,
+  setCacheNX,
   deleteCache,
   deleteCachePattern,
 } from './db/index.js';

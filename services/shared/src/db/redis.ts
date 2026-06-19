@@ -57,6 +57,15 @@ export async function setCache<T>(key: string, value: T, ttlSeconds: number): Pr
   await client.setex(key, ttlSeconds, JSON.stringify(value));
 }
 
+// Set a key only if it does not already exist (with TTL).
+// Returns true if this caller set it (i.e. "won" the right to act), false if it already existed.
+// Useful as a combined dedup lock + short negative-cache for on-demand work.
+export async function setCacheNX(key: string, ttlSeconds: number): Promise<boolean> {
+  const client = getRedis();
+  const res = await client.set(key, '1', 'EX', ttlSeconds, 'NX');
+  return res === 'OK';
+}
+
 export async function deleteCache(key: string): Promise<void> {
   const client = getRedis();
   await client.del(key);
