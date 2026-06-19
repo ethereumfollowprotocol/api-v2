@@ -192,7 +192,15 @@ export async function batchInsertEvents(events: EventInsert[]): Promise<void> {
   logger.info({ count: events.length }, 'Batch inserted events');
 }
 
-// Parse and categorize a batch of ListOps for bulk processing
+// Parse and categorize a batch of ListOps for bulk processing.
+//
+// Ops are folded into their NET per-key effect in log order: a record (or tag)
+// touched more than once in one batch resolves to a single final state (its last
+// op wins). This is required because processListOps applies all inserts then all
+// deletes — without folding, an unfollow+refollow of the same record in one batch
+// (common during resyncs) lands in both lists and the delete wins, silently
+// dropping the follow. Removing a record also clears that record's tags, mirroring
+// the cascade in batchDeleteRecords.
 export function parseListOpsBatch(
   logs: Array<{ slot: `0x${string}`; op: `0x${string}` }>,
   chainId: number,
@@ -203,10 +211,19 @@ export function parseListOpsBatch(
   recordDeletes: RecordDelete[];
   tagDeletes: TagDelete[];
 } {
-  const recordInserts: RecordInsert[] = [];
-  const tagInserts: TagInsert[] = [];
-  const recordDeletes: RecordDelete[] = [];
-  const tagDeletes: TagDelete[] = [];
+  const contract = contractAddress.toLowerCase();
+  const recordKey = (slot: string, record: string) => `${slot}:${record}`;
+
+  // Final in-batch state keyed by record / (record, tag). Iteration order follows
+  // first insertion, i.e. log order, which keeps emitted batches deterministic.
+  const records = new Map<
+    string,
+    { slot: `0x${string}`; record: string; present: boolean; insert?: RecordInsert }
+  >();
+  const tags = new Map<
+    string,
+    { recordKey: string; slot: `0x${string}`; record: string; tag: string; present: boolean }
+  >();
 
   for (const { slot, op } of logs) {
     const parsed = parseListOp(op);
@@ -219,49 +236,67 @@ export function parseListOpsBatch(
       const record = parseRecord(data);
       if (!record) continue;
 
-      recordInserts.push({
-        chainId,
-        contractAddress: contractAddress.toLowerCase(),
+      records.set(recordKey(slot, data), {
         slot,
         record: data,
-        recordVersion: record.version,
-        recordType: record.recordType,
-        recordData: record.recordData,
+        present: true,
+        insert: {
+          chainId,
+          contractAddress: contract,
+          slot,
+          record: data,
+          recordVersion: record.version,
+          recordType: record.recordType,
+          recordData: record.recordData,
+        },
       });
     } else if (opcode === 2) {
-      // Remove record
-      recordDeletes.push({
-        chainId,
-        contractAddress: contractAddress.toLowerCase(),
-        slot,
-        record: data,
-      });
-    } else if (opcode === 3) {
-      // Add tag
-      const recordHex = data.slice(0, 46) as `0x${string}`;
+      // Remove record, and clear its tags (record delete cascades to tags)
+      const rk = recordKey(slot, data);
+      records.set(rk, { slot, record: data, present: false });
+      const prefix = rk + ':';
+      for (const [tk, t] of tags) {
+        if (tk.startsWith(prefix)) t.present = false;
+      }
+    } else if (opcode === 3 || opcode === 4) {
+      // Add (3) / remove (4) tag
+      const recordHex = data.slice(0, 46);
       const tagHex = data.slice(46);
       const tag = Buffer.from(tagHex, 'hex').toString('utf8').replace(/\0/g, '');
+      const rk = recordKey(slot, recordHex);
 
-      tagInserts.push({
-        chainId,
-        contractAddress: contractAddress.toLowerCase(),
+      tags.set(`${rk}:${tag}`, {
+        recordKey: rk,
         slot,
         record: recordHex,
         tag,
+        present: opcode === 3,
       });
-    } else if (opcode === 4) {
-      // Remove tag
-      const recordHex = data.slice(0, 46) as `0x${string}`;
-      const tagHex = data.slice(46);
-      const tag = Buffer.from(tagHex, 'hex').toString('utf8').replace(/\0/g, '');
+    }
+  }
 
-      tagDeletes.push({
-        chainId,
-        contractAddress: contractAddress.toLowerCase(),
-        slot,
-        record: recordHex,
-        tag,
-      });
+  const recordInserts: RecordInsert[] = [];
+  const recordDeletes: RecordDelete[] = [];
+  for (const r of records.values()) {
+    if (r.present && r.insert) {
+      recordInserts.push(r.insert);
+    } else if (!r.present) {
+      recordDeletes.push({ chainId, contractAddress: contract, slot: r.slot, record: r.record });
+    }
+  }
+
+  const tagInserts: TagInsert[] = [];
+  const tagDeletes: TagDelete[] = [];
+  for (const t of tags.values()) {
+    // A record removed in this batch already drops its tags via the
+    // batchDeleteRecords cascade, so skip both inserting and deleting those tags.
+    const recordRemoved = records.get(t.recordKey)?.present === false;
+    if (recordRemoved) continue;
+
+    if (t.present) {
+      tagInserts.push({ chainId, contractAddress: contract, slot: t.slot, record: t.record, tag: t.tag });
+    } else {
+      tagDeletes.push({ chainId, contractAddress: contract, slot: t.slot, record: t.record, tag: t.tag });
     }
   }
 

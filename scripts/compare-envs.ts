@@ -36,7 +36,7 @@ const DEFAULT_LISTS = ['3'];
 // CLI
 // ============================================================
 
-interface Options {
+export interface Options {
   dev: string;
   prod: string;
   addresses: string[];
@@ -180,7 +180,7 @@ async function fetchJson(baseUrl: string, path: string): Promise<FetchResult> {
 // Deep diff
 // ============================================================
 
-interface Diff {
+export interface Diff {
   path: string;
   prod: string;
   dev: string;
@@ -231,7 +231,7 @@ function groupByKey(items: unknown[], ignoredKeys: Set<string>): Map<string, unk
   return groups;
 }
 
-function diffValues(prod: unknown, dev: unknown, path: string, opts: Options, out: Diff[]): void {
+export function diffValues(prod: unknown, dev: unknown, path: string, opts: Options, out: Diff[]): void {
   if (out.length > 500) return; // hard cap; the endpoint is already failed
 
   // Both missing/null-ish
@@ -469,7 +469,11 @@ async function main(): Promise<void> {
   if (diffs + errors > 0) process.exitCode = 1;
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only run when executed directly (e.g. `tsx scripts/compare-envs.ts`), not when
+// imported by tests
+if (process.argv[1]?.includes('compare-envs')) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

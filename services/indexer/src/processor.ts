@@ -191,7 +191,9 @@ async function processListOps(
     batchInsertEvents(events),
   ]);
 
-  // Deletes need to happen after inserts to handle edge cases
+  // parseListOpsBatch already folds each record/tag to a single net state, so
+  // the insert and delete sets are disjoint and either order is correct; deletes
+  // run after inserts defensively (and to keep the record→tag delete cascade last).
   await batchDeleteRecords(recordDeletes);
   await batchDeleteTags(tagDeletes);
 
