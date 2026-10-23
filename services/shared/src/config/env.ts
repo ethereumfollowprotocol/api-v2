@@ -24,8 +24,12 @@ const envSchema = z.object({
   RATE_LIMIT_MAX: z.coerce.number().default(100),
   RATE_LIMIT_WINDOW: z.coerce.number().default(60000),
 
-  // ENS API
-  ENS_API_URL: z.string().url().default('https://ens.ethfollow.xyz'),
+  // ENS worker (ensv2-records); resolves v1 and v2 names
+  ENS_API_URL: z
+    .string()
+    .url()
+    .default('https://ensv2.on.hotbox.wtf')
+    .transform((u) => u.replace(/\/+$/, '')),
 
   // Indexer
   INDEXER_BATCH_SIZE: z.coerce.number().default(5000),

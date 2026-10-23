@@ -23,6 +23,19 @@ export { logger, createLogger } from './logger.js';
 // ENS contenthash
 export { decodeContentHash, contenthashAbi } from './contenthash.js';
 
+// ENS worker client
+export {
+  fetchENSProfileByAddress,
+  fetchENSProfileByName,
+  fetchENSProfilesByName,
+  toENSMetadataRow,
+  upsertENSMetadata,
+  ENS_WORKER_MAX_BULK,
+  type ENSWorkerProfile,
+  type ENSWorkerBulkItem,
+  type ENSMetadataRow,
+} from './ens.js';
+
 // Phase management
 export {
   getSystemState,

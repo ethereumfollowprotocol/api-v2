@@ -1,28 +1,24 @@
-import { createPublicClient, http, isAddress } from 'viem';
+import { isAddress } from 'viem';
 import { normalize } from 'viem/ens';
-import { mainnet } from 'viem/chains';
-import { env, type Address } from '@efp/shared';
+import { fetchENSProfileByName, type Address } from '@efp/shared';
 
-// Viem client for ENS resolution
-const client = createPublicClient({
-  chain: mainnet,
-  transport: http(env.PRIMARY_RPC_ETH),
-});
-
-// Resolve ENS name or validate address
-export async function resolveAddressOrENS(addressOrENS: string): Promise<Address | null> {
+// Resolve ENS name or validate address.
+// `fresh` bypasses the ENS worker's cache (for ?cache=fresh requests).
+export async function resolveAddressOrENS(
+  addressOrENS: string,
+  { fresh = false }: { fresh?: boolean } = {}
+): Promise<Address | null> {
   // Check if it's already a valid address
   if (isAddress(addressOrENS)) {
     return addressOrENS.toLowerCase() as Address;
   }
 
-  // Try to resolve as ENS name
+  // Try to resolve as ENS name (v1 or v2) via the ENS worker
   try {
-    const resolvedAddress = await client.getEnsAddress({
-      name: normalize(addressOrENS),
-    });
+    const profile = await fetchENSProfileByName(normalize(addressOrENS), fresh);
+    const resolvedAddress = profile?.address;
 
-    if (resolvedAddress) {
+    if (resolvedAddress && isAddress(resolvedAddress)) {
       return resolvedAddress.toLowerCase() as Address;
     }
   } catch {

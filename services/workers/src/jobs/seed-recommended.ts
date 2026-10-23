@@ -1,5 +1,12 @@
 import type PgBoss from 'pg-boss';
-import { getClient, createLogger, env } from '@efp/shared';
+import {
+  getClient,
+  createLogger,
+  fetchENSProfilesByName,
+  ENS_WORKER_MAX_BULK,
+  type ENSWorkerBulkItem,
+  type ENSWorkerProfile,
+} from '@efp/shared';
 
 const logger = createLogger('seed-recommended');
 
@@ -38,46 +45,23 @@ const RECOMMENDED_LISTS = {
   ],
 };
 
-interface ENSProfileResponse {
-  type: 'success' | 'error';
-  name?: string;
-  address?: string;
-  avatar?: string;
-  records?: Record<string, string>;
-}
-
-interface BulkENSResponse {
-  response_length: number;
-  response: ENSProfileResponse[];
-}
-
 /**
- * Resolves ENS names in batches using the ENS API
+ * Resolves ENS names in batches using the ENS worker
  */
-async function resolveENSBatch(names: string[]): Promise<ENSProfileResponse[]> {
-  const ENS_API_URL = env.ENS_API_URL || 'https://ens.ethfollow.xyz';
-  const results: ENSProfileResponse[] = [];
+async function resolveENSBatch(names: string[]): Promise<ENSWorkerBulkItem[]> {
+  const results: ENSWorkerBulkItem[] = [];
 
-  // Process in batches of 50
-  const batchSize = 50;
-  for (let i = 0; i < names.length; i += batchSize) {
-    const batch = names.slice(i, i + batchSize);
-    const query = batch.map((name) => `names[]=${encodeURIComponent(name)}`).join('&');
+  for (let i = 0; i < names.length; i += ENS_WORKER_MAX_BULK) {
+    const batch = names.slice(i, i + ENS_WORKER_MAX_BULK);
 
     try {
-      const response = await fetch(`${ENS_API_URL}/bulk/n?${query}`);
-      if (response.ok) {
-        const data = (await response.json()) as BulkENSResponse;
-        results.push(...data.response);
-      } else {
-        logger.warn({ status: response.status }, 'Failed to fetch ENS batch');
-      }
+      results.push(...(await fetchENSProfilesByName(batch)));
     } catch (err) {
       logger.error({ err }, 'Error fetching ENS batch');
     }
 
     // Rate limiting
-    if (i + batchSize < names.length) {
+    if (i + ENS_WORKER_MAX_BULK < names.length) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
@@ -135,7 +119,7 @@ export async function handleSeedRecommended(
 
     // Filter successful profiles and format for insertion
     const validProfiles = profiles
-      .filter((p) => p.type === 'success' && p.address && p.name)
+      .filter((p): p is { type: 'success' } & ENSWorkerProfile => p.type === 'success' && !!p.address && !!p.name)
       .map((profile) => {
         const name = profile.name!.toLowerCase();
         const ensClass = classMap.get(name) || 'C';
@@ -149,7 +133,7 @@ export async function handleSeedRecommended(
         }
 
         // Extract header from records if available
-        const header = profile.records?.header || null;
+        const header = profile.header || profile.records?.header || null;
 
         return {
           address: profile.address!.toLowerCase(),
