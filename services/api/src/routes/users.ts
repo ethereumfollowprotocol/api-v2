@@ -82,12 +82,19 @@ function parseIncludeParam(include?: string | string[]): Set<string> {
   return new Set(include.split(',').map((v) => v.trim().toLowerCase()));
 }
 
-// Helper to resolve address or return 400
+// True when the request asks to bypass caches (?cache=fresh)
+function isFreshRequest(request: FastifyRequest): boolean {
+  return (request.query as { cache?: string } | undefined)?.cache === 'fresh';
+}
+
+// Helper to resolve address or return 400.
+// On ?cache=fresh, the name lookup also bypasses the ENS worker's cache.
 async function resolveAddress(
   addressOrENS: string,
-  reply: FastifyReply
+  reply: FastifyReply,
+  request: FastifyRequest
 ): Promise<Address | null> {
-  const address = await resolveAddressOrENS(addressOrENS);
+  const address = await resolveAddressOrENS(addressOrENS, { fresh: isFreshRequest(request) });
 
   if (!address) {
     const errorMessage = isENSName(addressOrENS)
@@ -149,12 +156,12 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: { cache?: string } }>(
     '/users/:addressOrENS/account',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
-      // If cache=fresh, refresh ENS data from chain before building account
+      // If cache=fresh, refresh ENS data (bypassing caches) before building account
       if (request.query.cache === 'fresh') {
-        await refreshENSProfile(address);
+        await refreshENSProfile(address, { fresh: true });
       }
 
       const account = await getUserAccount(address);
@@ -166,12 +173,12 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: { cache?: string } }>(
     '/users/:addressOrENS/details',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
-      // If cache=fresh, refresh ENS data from chain before building details
+      // If cache=fresh, refresh ENS data (bypassing caches) before building details
       if (request.query.cache === 'fresh') {
-        await refreshENSProfile(address);
+        await refreshENSProfile(address, { fresh: true });
       }
 
       const details = await getUserDetails(address);
@@ -183,7 +190,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams }>(
     '/users/:addressOrENS/stats',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const stats = await getUserStats(address);
@@ -195,7 +202,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: PaginationQuery }>(
     '/users/:addressOrENS/followers',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const { limit = '10', offset = '0', sort = 'latest', tags, include } = request.query;
@@ -220,7 +227,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: PaginationQuery }>(
     '/users/:addressOrENS/following',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const { limit = '10', offset = '0', sort = 'latest', tags, include } = request.query;
@@ -246,7 +253,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: PaginationQuery }>(
     '/users/:addressOrENS/allFollowers',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const { limit, offset = '0', sort = 'latest', tags, include } = request.query;
@@ -275,7 +282,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: PaginationQuery }>(
     '/users/:addressOrENS/allFollowing',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const { limit, offset = '0', sort = 'latest', tags, include } = request.query;
@@ -313,12 +320,12 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: { cache?: string } }>(
     '/users/:addressOrENS/ens',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
-      // If cache=fresh, refresh ENS data from chain before returning
+      // If cache=fresh, refresh ENS data (bypassing caches) before returning
       if (request.query.cache === 'fresh') {
-        await refreshENSProfile(address);
+        await refreshENSProfile(address, { fresh: true });
       }
 
       const account = await getUserAccount(address);
@@ -338,7 +345,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams }>(
     '/users/:addressOrENS/ens/avatar',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const profile = await getENSProfileOrResolve(address);
@@ -355,7 +362,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams }>(
     '/users/:addressOrENS/primary-list',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const details = await getUserDetails(address);
@@ -368,7 +375,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams }>(
     '/users/:addressOrENS/lists',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const [userLists, details] = await Promise.all([
@@ -387,7 +394,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: PaginationQuery }>(
     '/users/:addressOrENS/latestFollowers',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const { limit = '10', offset = '0', include } = request.query;
@@ -411,7 +418,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams }>(
     '/users/:addressOrENS/allFollowingAddresses',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const following = await getAllFollowing(address, {
@@ -426,7 +433,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: { limit?: string; offset?: string; seed?: string } }>(
     '/users/:addressOrENS/recommended',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const { limit = '10', offset = '0', seed } = request.query;
@@ -445,7 +452,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: { limit?: string; offset?: string } }>(
     '/users/:addressOrENS/recommended/details',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const { limit = '10', offset = '0' } = request.query;
@@ -463,7 +470,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: { term?: string; limit?: string; offset?: string; include?: string } }>(
     '/users/:addressOrENS/searchFollowers',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const { term = '', limit = '10', offset = '0', include } = request.query;
@@ -486,7 +493,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: { term?: string; limit?: string; offset?: string; include?: string } }>(
     '/users/:addressOrENS/searchFollowing',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const { term = '', limit = '10', offset = '0', include } = request.query;
@@ -509,7 +516,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams }>(
     '/users/:addressOrENS/tags',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       return await getUserTags(address);
@@ -520,7 +527,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams }>(
     '/users/:addressOrENS/taggedAs',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       return await getUserTaggedAs(address);
@@ -531,7 +538,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams }>(
     '/users/:addressOrENS/badges',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const poaps = await getPOAPBadges(address);
@@ -543,10 +550,10 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams & { targetAddressOrENS: string } }>(
     '/users/:addressOrENS/:targetAddressOrENS/relationship',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
-      const targetAddress = await resolveAddressOrENS(request.params.targetAddressOrENS);
+      const targetAddress = await resolveAddressOrENS(request.params.targetAddressOrENS, { fresh: isFreshRequest(request) });
       if (!targetAddress) {
         return reply.status(400).send({ response: 'Invalid target address' });
       }
@@ -566,10 +573,10 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams & { targetAddressOrENS: string } }>(
     '/users/:addressOrENS/:targetAddressOrENS/followerState',
     async (request, reply) => {
-      const userAddress = await resolveAddress(request.params.addressOrENS, reply);
+      const userAddress = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!userAddress) return;
 
-      const followerAddress = await resolveAddressOrENS(request.params.targetAddressOrENS);
+      const followerAddress = await resolveAddressOrENS(request.params.targetAddressOrENS, { fresh: isFreshRequest(request) });
       if (!followerAddress) {
         return reply.status(400).send({ response: 'Invalid follower address' });
       }
@@ -629,7 +636,7 @@ export async function usersRoutes(app: FastifyInstance) {
         });
       }
 
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       const limitNum = Math.min(parseInt(limit, 10) || 100, 1000);
@@ -674,12 +681,12 @@ export async function usersRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { leader, limit, offset } = request.query;
 
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       // Leader is optional - fallback to the user's own address
       const leaderAddress = leader
-        ? await resolveAddressOrENS(leader)
+        ? await resolveAddressOrENS(leader, { fresh: isFreshRequest(request) })
         : address;
 
       if (!leaderAddress) {
@@ -754,7 +761,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams }>(
     '/users/:addressOrENS/list-records',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       // Get user's primary list storage location
@@ -831,7 +838,7 @@ export async function usersRoutes(app: FastifyInstance) {
       start?: string;
     };
   }>('/users/:addressOrENS/notifications', async (request, reply) => {
-    const address = await resolveAddress(request.params.addressOrENS, reply);
+    const address = await resolveAddress(request.params.addressOrENS, reply, request);
     if (!address) return;
 
     const {
@@ -957,7 +964,7 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams }>(
     '/users/:addressOrENS/poap',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       // Check if user has an existing claim
@@ -998,11 +1005,11 @@ export async function usersRoutes(app: FastifyInstance) {
   app.get<{ Params: AddressParams; Querystring: { cache?: string } }>(
     '/users/:addressOrENS/simple-profile',
     async (request, reply) => {
-      const address = await resolveAddress(request.params.addressOrENS, reply);
+      const address = await resolveAddress(request.params.addressOrENS, reply, request);
       if (!address) return;
 
       if (request.query.cache === 'fresh') {
-        await refreshENSProfile(address);
+        await refreshENSProfile(address, { fresh: true });
       }
 
       const [ens, statsResult] = await Promise.all([
