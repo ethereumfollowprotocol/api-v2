@@ -2,8 +2,12 @@ import { isAddress } from 'viem';
 import { normalize } from 'viem/ens';
 import { fetchENSProfileByName, type Address } from '@efp/shared';
 
-// Resolve ENS name or validate address
-export async function resolveAddressOrENS(addressOrENS: string): Promise<Address | null> {
+// Resolve ENS name or validate address.
+// `fresh` bypasses the ENS worker's cache (for ?cache=fresh requests).
+export async function resolveAddressOrENS(
+  addressOrENS: string,
+  { fresh = false }: { fresh?: boolean } = {}
+): Promise<Address | null> {
   // Check if it's already a valid address
   if (isAddress(addressOrENS)) {
     return addressOrENS.toLowerCase() as Address;
@@ -11,7 +15,7 @@ export async function resolveAddressOrENS(addressOrENS: string): Promise<Address
 
   // Try to resolve as ENS name (v1 or v2) via the ENS worker
   try {
-    const profile = await fetchENSProfileByName(normalize(addressOrENS));
+    const profile = await fetchENSProfileByName(normalize(addressOrENS), fresh);
     const resolvedAddress = profile?.address;
 
     if (resolvedAddress && isAddress(resolvedAddress)) {
