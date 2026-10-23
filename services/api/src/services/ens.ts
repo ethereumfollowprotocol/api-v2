@@ -1,7 +1,14 @@
-import { createPublicClient, http, namehash } from 'viem';
 import { normalize } from 'viem/ens';
-import { mainnet } from 'viem/chains';
-import { query, env, setCacheNX, type Address, type ENSProfile, createLogger, decodeContentHash, contenthashAbi } from '@efp/shared';
+import {
+  query,
+  setCacheNX,
+  type Address,
+  type ENSProfile,
+  createLogger,
+  fetchENSProfileByAddress,
+  toENSMetadataRow,
+  upsertENSMetadata,
+} from '@efp/shared';
 
 const logger = createLogger('ens-service');
 
@@ -142,142 +149,26 @@ export async function getENSProfiles(
   return profiles;
 }
 
-// Viem client for on-demand ENS resolution (lazy-initialized)
-let _client: ReturnType<typeof createPublicClient> | null = null;
-function getClient() {
-  if (!_client) {
-    _client = createPublicClient({
-      chain: mainnet,
-      transport: http(env.PRIMARY_RPC_ETH),
-    });
-  }
-  return _client;
-}
-
-// All ENS text record keys to fetch (same set as sync-ens-metadata worker)
-const textRecordKeys = [
-  'url',
-  'name',
-  'mail',
-  'email',
-  'header',
-  'display',
-  'location',
-  'status',
-  'timezone',
-  'language',
-  'com.github',
-  'org.matrix',
-  'io.keybase',
-  'description',
-  'com.twitter',
-  'com.discord',
-  'social.bsky',
-  'org.telegram',
-  'social.mastodon',
-  'network.dm3.profile',
-  'network.dm3.deliveryService',
-];
-
-// On-demand ENS refresh: resolve name, fetch all records, upsert into DB, return fresh profile
-export async function refreshENSProfile(address: Address): Promise<ENSProfile | undefined> {
-  const client = getClient();
-
-  logger.info({ address }, 'Refreshing ENS profile on-demand');
+// On-demand ENS refresh via the ENS worker: resolve, upsert into DB, return fresh profile.
+// `fresh` bypasses the worker's own cache (use for explicit ?cache=fresh requests).
+export async function refreshENSProfile(
+  address: Address,
+  { fresh = false }: { fresh?: boolean } = {}
+): Promise<ENSProfile | undefined> {
+  logger.info({ address, fresh }, 'Refreshing ENS profile on-demand');
 
   try {
-    const name = await client.getEnsName({ address: address as `0x${string}` });
+    const profile = await fetchENSProfileByAddress(address, fresh);
+    const row = profile ? toENSMetadataRow(profile) : null;
+    await upsertENSMetadata(address, row);
+    if (!row) return undefined;
 
-    if (!name) {
-      await query(
-        `INSERT INTO ens_metadata (address, name, resolved_at, updated_at)
-         VALUES ($1, NULL, NOW(), NOW())
-         ON CONFLICT (address) DO UPDATE SET
-           name = NULL, resolved_at = NOW(), updated_at = NOW()`,
-        [address]
-      );
-      return undefined;
-    }
-
-    // Validate normalization
-    let normalizedName: string;
-    try {
-      normalizedName = normalize(name);
-    } catch {
-      await query(
-        `INSERT INTO ens_metadata (address, name, resolved_at, updated_at)
-         VALUES ($1, NULL, NOW(), NOW())
-         ON CONFLICT (address) DO UPDATE SET
-           name = NULL, resolved_at = NOW(), updated_at = NOW()`,
-        [address]
-      );
-      return undefined;
-    }
-
-    if (name !== normalizedName) {
-      await query(
-        `INSERT INTO ens_metadata (address, name, resolved_at, updated_at)
-         VALUES ($1, NULL, NOW(), NOW())
-         ON CONFLICT (address) DO UPDATE SET
-           name = NULL, resolved_at = NOW(), updated_at = NOW()`,
-        [address]
-      );
-      return undefined;
-    }
-
-    // Fetch avatar, contenthash, and all text records in parallel
-    const [avatar, rawContenthash, ...textRecordValues] = await Promise.all([
-      client.getEnsAvatar({ name: normalizedName }).catch(() => null),
-      client
-        .getEnsResolver({ name: normalizedName })
-        .then((resolver) =>
-          resolver
-            ? client.readContract({
-                address: resolver,
-                abi: contenthashAbi,
-                functionName: 'contenthash',
-                args: [namehash(normalizedName)],
-              })
-            : null
-        )
-        .catch(() => null),
-      ...textRecordKeys.map((key) =>
-        client.getEnsText({ name: normalizedName, key }).catch(() => null)
-      ),
-    ]);
-
-    // Build records object
-    const records: Record<string, string> = {};
-    if (avatar) records.avatar = avatar;
-    const contenthash = decodeContentHash(rawContenthash as string | null);
-    if (contenthash) records.contenthash = contenthash;
-    textRecordKeys.forEach((key, index) => {
-      const value = textRecordValues[index];
-      if (value) records[key] = value;
-    });
-
-    const header = records.header || null;
-
-    // Upsert into database
-    await query(
-      `INSERT INTO ens_metadata (address, name, avatar, header, records, resolved_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-       ON CONFLICT (address) DO UPDATE SET
-         name = EXCLUDED.name,
-         avatar = EXCLUDED.avatar,
-         header = EXCLUDED.header,
-         records = EXCLUDED.records,
-         resolved_at = NOW(),
-         updated_at = NOW()`,
-      [address, name, avatar, header, Object.keys(records).length > 0 ? JSON.stringify(records) : null]
-    );
-
-    logger.info({ address, name, hasAvatar: !!avatar }, 'Refreshed ENS profile');
+    logger.info({ address, name: row.name, hasAvatar: !!row.avatar }, 'Refreshed ENS profile');
 
     return {
-      name,
-      avatar: avatar ?? null,
-      records: Object.keys(records).length > 0 ? records : undefined,
+      name: row.name,
+      avatar: row.avatar,
+      records: row.records ?? undefined,
       updated_at: new Date().toISOString(),
     };
   } catch (err) {
@@ -288,7 +179,7 @@ export async function refreshENSProfile(address: Address): Promise<ENSProfile | 
 }
 
 // How often we'll attempt a live resolution for an address that is missing/unresolved in the DB.
-// Bounds RPC load: each address is resolved on-demand at most once per this window.
+// Bounds worker load: each address is resolved on-demand at most once per this window.
 const ENS_ONDEMAND_TTL = 600; // 10 minutes
 
 // Read ENS from the DB cache, falling back to a single guarded on-demand live
@@ -297,15 +188,15 @@ const ENS_ONDEMAND_TTL = 600; // 10 minutes
 // never seeded into ens_metadata (e.g. addresses with no EFP social-graph presence).
 export async function getENSProfileOrResolve(address: Address): Promise<ENSProfile | undefined> {
   const profile = await getENSProfile(address);
-  if (profile) return profile; // row exists with a valid, normalized name → done, no RPC
+  if (profile) return profile; // row exists with a valid, normalized name → done, no lookup
 
   // No row, or a NULL-name row. Attempt a live resolution at most once per TTL window.
   // The Redis key doubles as a dedup lock (NX) and a short negative cache: concurrent
-  // and repeat requests within the window serve the current (empty) value without RPC.
+  // and repeat requests within the window serve the current (empty) value without a lookup.
   const won = await setCacheNX(`ens:attempt:${address}`, ENS_ONDEMAND_TTL);
   if (!won) return profile;
 
-  // refreshENSProfile resolves on-chain, upserts ens_metadata, and handles its own
+  // refreshENSProfile resolves via the ENS worker, upserts ens_metadata, and handles its own
   // errors (returning cached data on failure), so subsequent reads hit the DB.
   return (await refreshENSProfile(address)) ?? profile;
 }

@@ -152,9 +152,9 @@ export async function usersRoutes(app: FastifyInstance) {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      // If cache=fresh, refresh ENS data from chain before building account
+      // If cache=fresh, refresh ENS data (bypassing caches) before building account
       if (request.query.cache === 'fresh') {
-        await refreshENSProfile(address);
+        await refreshENSProfile(address, { fresh: true });
       }
 
       const account = await getUserAccount(address);
@@ -169,9 +169,9 @@ export async function usersRoutes(app: FastifyInstance) {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      // If cache=fresh, refresh ENS data from chain before building details
+      // If cache=fresh, refresh ENS data (bypassing caches) before building details
       if (request.query.cache === 'fresh') {
-        await refreshENSProfile(address);
+        await refreshENSProfile(address, { fresh: true });
       }
 
       const details = await getUserDetails(address);
@@ -316,9 +316,9 @@ export async function usersRoutes(app: FastifyInstance) {
       const address = await resolveAddress(request.params.addressOrENS, reply);
       if (!address) return;
 
-      // If cache=fresh, refresh ENS data from chain before returning
+      // If cache=fresh, refresh ENS data (bypassing caches) before returning
       if (request.query.cache === 'fresh') {
-        await refreshENSProfile(address);
+        await refreshENSProfile(address, { fresh: true });
       }
 
       const account = await getUserAccount(address);
@@ -1002,7 +1002,7 @@ export async function usersRoutes(app: FastifyInstance) {
       if (!address) return;
 
       if (request.query.cache === 'fresh') {
-        await refreshENSProfile(address);
+        await refreshENSProfile(address, { fresh: true });
       }
 
       const [ens, statsResult] = await Promise.all([

@@ -83,9 +83,9 @@ export async function listsRoutes(app: FastifyInstance) {
       // Get ENS for user or owner
       const address = list.user || list.owner;
 
-      // If cache=fresh, refresh ENS data from chain before building account
+      // If cache=fresh, refresh ENS data (bypassing caches) before building account
       if (request.query.cache === 'fresh') {
-        await refreshENSProfile(address);
+        await refreshENSProfile(address, { fresh: true });
       }
 
       // Get primary list for the address
@@ -127,9 +127,9 @@ export async function listsRoutes(app: FastifyInstance) {
 
       const address = list.user || list.owner;
 
-      // If cache=fresh, refresh ENS data from chain before building details
+      // If cache=fresh, refresh ENS data (bypassing caches) before building details
       if (request.query.cache === 'fresh') {
-        await refreshENSProfile(address);
+        await refreshENSProfile(address, { fresh: true });
       }
 
       // Get ENS, ranks, stats, and primary list
