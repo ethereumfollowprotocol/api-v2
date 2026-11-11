@@ -8,7 +8,8 @@ interface ResyncListRelationshipsJob {
 }
 
 export async function handleResyncListRelationships(
-  job: PgBoss.Job<ResyncListRelationshipsJob>
+  job: PgBoss.Job<ResyncListRelationshipsJob>,
+  boss: PgBoss
 ): Promise<void> {
   const { tokenId } = job.data;
 
@@ -49,15 +50,10 @@ export async function handleResyncListRelationships(
   }
 
   // This IS the user's primary list — delegate to resync-user-relationships for full rebuild
-  const boss = (job as unknown as { boss: PgBoss }).boss;
-  if (boss) {
-    await boss.send(
-      'resync-user-relationships',
-      { address: user, newPrimaryList: tokenId },
-      { singletonKey: `resync:${user}`, singletonSeconds: 30 }
-    );
-    logger.info({ tokenId, user }, 'Delegated to resync-user-relationships (primary list)');
-  } else {
-    logger.warn({ tokenId, user }, 'No boss instance available to delegate resync');
-  }
+  await boss.send(
+    'resync-user-relationships',
+    { address: user, newPrimaryList: tokenId },
+    { singletonKey: `resync:${user}`, singletonSeconds: 30 }
+  );
+  logger.info({ tokenId, user }, 'Delegated to resync-user-relationships (primary list)');
 }
