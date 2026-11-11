@@ -71,9 +71,10 @@ async function main() {
   await boss.start();
   logger.info('pg-boss started');
 
-  // Register job handlers
+  // Register job handlers. Handlers that queue follow-up jobs take `boss` as a second
+  // argument; pg-boss jobs carry no reference to the instance.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handlers: Array<[string, (job: PgBoss.Job<any>) => Promise<void>]> = [
+  const handlers: Array<[string, (job: PgBoss.Job<any>, boss: PgBoss) => Promise<void>]> = [
     ['update-user-stats', handleUpdateUserStats],
     ['calculate-mutuals', handleCalculateMutuals],
     ['update-leaderboard-entry', handleUpdateLeaderboardEntry],
@@ -91,7 +92,7 @@ async function main() {
 
   for (const [jobName, handler] of handlers) {
     const config = jobConfigs[jobName] || {};
-    await boss.work(jobName, config, handler);
+    await boss.work(jobName, config, (job) => handler(job, boss));
     logger.info({ jobName, config }, 'Registered job handler');
   }
 

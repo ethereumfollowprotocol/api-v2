@@ -9,7 +9,8 @@ interface ResyncUserRelationshipsJob {
 }
 
 export async function handleResyncUserRelationships(
-  job: PgBoss.Job<ResyncUserRelationshipsJob>
+  job: PgBoss.Job<ResyncUserRelationshipsJob>,
+  boss: PgBoss
 ): Promise<void> {
   const { address, newPrimaryList } = job.data;
 
@@ -218,17 +219,14 @@ export async function handleResyncUserRelationships(
     // 13. After commit, queue batch-recalculate-mutuals job if there are affected addresses
     const allAffectedAddresses = [...new Set([...oldMutualAddresses, ...newFollowedAddresses])];
     if (allAffectedAddresses.length > 0) {
-      const boss = (job as unknown as { boss: PgBoss }).boss;
-      if (boss) {
-        await boss.send('batch-recalculate-mutuals', {
-          userAddress: address,
-          affectedAddresses: allAffectedAddresses,
-        });
-        logger.info(
-          { address, affectedCount: allAffectedAddresses.length },
-          'Queued batch-recalculate-mutuals job'
-        );
-      }
+      await boss.send('batch-recalculate-mutuals', {
+        userAddress: address,
+        affectedAddresses: allAffectedAddresses,
+      });
+      logger.info(
+        { address, affectedCount: allAffectedAddresses.length },
+        'Queued batch-recalculate-mutuals job'
+      );
     }
   } catch (err) {
     await client.query('ROLLBACK');
